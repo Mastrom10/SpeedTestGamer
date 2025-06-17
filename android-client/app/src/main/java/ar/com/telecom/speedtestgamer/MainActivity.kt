@@ -1,8 +1,10 @@
 package ar.com.telecom.speedtestgamer
 
 import android.os.Bundle
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -23,6 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editIp: EditText
     private lateinit var editPort: EditText
     private lateinit var startButton: Button
+    private lateinit var spinnerCount: Spinner
+    private lateinit var spinnerTick: Spinner
+    private lateinit var spinnerPayload: Spinner
     private lateinit var statsView: TextView
     private lateinit var graph: GraphView
     private val series = LineGraphSeries<DataPoint>()
@@ -34,9 +39,39 @@ class MainActivity : AppCompatActivity() {
         editIp = findViewById(R.id.editIp)
         editPort = findViewById(R.id.editPort)
         startButton = findViewById(R.id.buttonStart)
+        spinnerCount = findViewById(R.id.spinnerCount)
+        spinnerTick = findViewById(R.id.spinnerTick)
+        spinnerPayload = findViewById(R.id.spinnerPayload)
         statsView = findViewById(R.id.textStats)
         graph = findViewById(R.id.graph)
         graph.addSeries(series)
+
+        ArrayAdapter.createFromResource(
+            this,
+            R.array.packet_counts,
+            android.R.layout.simple_spinner_item
+        ).also { adapter ->
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            spinnerCount.adapter = adapter
+        }
+
+        ArrayAdapter.createFromResource(
+            this,
+            R.array.tick_values,
+            android.R.layout.simple_spinner_item
+        ).also { adapter ->
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            spinnerTick.adapter = adapter
+        }
+
+        ArrayAdapter.createFromResource(
+            this,
+            R.array.payload_sizes,
+            android.R.layout.simple_spinner_item
+        ).also { adapter ->
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            spinnerPayload.adapter = adapter
+        }
 
         startButton.setOnClickListener {
             startTest()
@@ -48,19 +83,19 @@ class MainActivity : AppCompatActivity() {
         statsView.text = "Running..."
         val ip = editIp.text.toString()
         val port = editPort.text.toString().toIntOrNull() ?: return
+        val count = spinnerCount.selectedItem.toString().toInt()
+        val tickMs = spinnerTick.selectedItem.toString().toInt()
+        val payloadSize = spinnerPayload.selectedItem.toString().toInt()
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val result = runTest(ip, port)
+            val result = runTest(ip, port, count, tickMs, payloadSize)
             withContext(Dispatchers.Main) {
                 statsView.text = result
             }
         }
     }
 
-    private suspend fun runTest(ip: String, port: Int): String {
-        val count = 50
-        val payloadSize = 0
-        val tickMs = 0
+    private suspend fun runTest(ip: String, port: Int, count: Int, tickMs: Int, payloadSize: Int): String {
         val socket = DatagramSocket()
         socket.soTimeout = 3000
         val server = InetAddress.getByName(ip)

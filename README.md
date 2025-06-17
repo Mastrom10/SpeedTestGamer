@@ -18,7 +18,7 @@ make CXX=aarch64-linux-gnu-g++
 
 ## Usage
 
-Start the server (default port 9000). You can optionally set the tick interval in milliseconds:
+Start the server (default port 9000). You can optionally set the tick interval in milliseconds. On startup the server lists all local IP addresses:
 
 ```sh
 ./dist/server [-p port] [-t tick_ms]
@@ -44,13 +44,11 @@ An Android front end is provided in `android-client`. It mirrors the C++ client 
   * `uint32_t client_id` – identifier of the client session.
   * `uint32_t payload_size` – desired payload size in bytes.
   * `uint32_t tick_request_ms` – desired tick interval.
-* **Sync** (server ➜ client):
-  * `uint64_t server_time_ns` – server timestamp when the request was received.
-  * `uint32_t server_id` – identifier of the server.
-  * `uint32_t tick_ms` – tick interval that will actually be used. Multiple `Sync`
-    messages are sent so the client can pick the one with the smallest round-trip
-    time to estimate the clock offset. The server continues to send a sync message
-    every second while packets are transmitted so the client can refine the offset.
+* **SyncRequest** (client ➜ server):
+  * `uint64_t client_time_ns` – timestamp when the request was sent.
+* **SyncResponse** (server ➜ client):
+  * `uint64_t recv_time_ns` – time the request was received on the server.
+  * `uint64_t send_time_ns` – timestamp just before the response was sent.
 * **Packet** (server ➜ client):
   * `uint32_t seq` – sequence number.
   * `uint64_t timestamp_ns` – server send timestamp in nanoseconds.
@@ -60,21 +58,21 @@ An Android front end is provided in `android-client`. It mirrors the C++ client 
 
 ## Latency calculation with unsynchronized clocks
 
-When the client sends the `Request` it notes the local send time `t_send`. The
-server replies with several `Sync` messages containing the timestamp `t_srv`
-taken when the request was received. For each sync message the client records the
-arrival time `t_recv` and computes a potential clock offset as:
+During startup the client exchanges synchronization messages with the server. For
+each pair the client notes the send time `t0` and on reception obtains `t1` and
+`t2` from the server together with the local receive time `t3`. Round trip time
+and clock offset are calculated as:
 
 ```
-offset_ns = t_srv - (t_send + (t_recv - t_send)/2)
+RTT = (t3 - t0) - (t2 - t1)
+offset_ns = ((t1 - t0) + (t2 - t3)) / 2
 ```
 
-The offset corresponding to the smallest observed round-trip time is used. This
-offset is subtracted from the timestamps of every `Packet` before computing
-latency. The adjusted latency becomes:
+The offset corresponding to the smallest RTT is kept and used to adjust
+timestamps of all data packets before computing latency:
 
 ```
 latency_ms = (client_now - (packet.timestamp_ns - offset_ns)) / 1e6
 ```
 
-Assuming roughly symmetric network delay, this compensates for differences between the client and server clocks so that the measured latency reflects only the network delay.
+Assuming roughly symmetric network delay, this compensates for differences between the client and server clocks so that the measured latency reflects only the network delay. The client continues to send a new synchronization message every five seconds and updates the offset whenever a lower RTT is observed.

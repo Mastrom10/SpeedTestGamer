@@ -32,6 +32,10 @@ Run the client specifying server IP and port. An optional parameter controls how
 
 The client displays the last packets in the terminal while logging all measurements to a timestamped file.
 
+### Android client
+
+An Android front end is provided in `android-client`. It mirrors the C++ client functionality but with a simple user interface. All parameters are entered manually and each field is labeled for clarity. Results are drawn on a bar chart that updates as packets arrive.
+
 ## Packet formats
 
 * **Request** (client ➜ server):

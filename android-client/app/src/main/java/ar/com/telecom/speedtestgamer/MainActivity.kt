@@ -1,16 +1,14 @@
 package ar.com.telecom.speedtestgamer
 
 import android.os.Bundle
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.jjoe64.graphview.GraphView
 import com.jjoe64.graphview.series.DataPoint
-import com.jjoe64.graphview.series.LineGraphSeries
+import com.jjoe64.graphview.series.BarGraphSeries
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -25,12 +23,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editIp: EditText
     private lateinit var editPort: EditText
     private lateinit var startButton: Button
-    private lateinit var spinnerCount: Spinner
-    private lateinit var spinnerTick: Spinner
-    private lateinit var spinnerPayload: Spinner
+    private lateinit var editCount: EditText
+    private lateinit var editTick: EditText
+    private lateinit var editPayload: EditText
     private lateinit var statsView: TextView
     private lateinit var graph: GraphView
-    private val series = LineGraphSeries<DataPoint>()
+    private val series = BarGraphSeries<DataPoint>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,39 +37,15 @@ class MainActivity : AppCompatActivity() {
         editIp = findViewById(R.id.editIp)
         editPort = findViewById(R.id.editPort)
         startButton = findViewById(R.id.buttonStart)
-        spinnerCount = findViewById(R.id.spinnerCount)
-        spinnerTick = findViewById(R.id.spinnerTick)
-        spinnerPayload = findViewById(R.id.spinnerPayload)
+        editCount = findViewById(R.id.editCount)
+        editTick = findViewById(R.id.editTick)
+        editPayload = findViewById(R.id.editPayload)
         statsView = findViewById(R.id.textStats)
         graph = findViewById(R.id.graph)
         graph.addSeries(series)
+        series.spacing = 50
 
-        ArrayAdapter.createFromResource(
-            this,
-            R.array.packet_counts,
-            android.R.layout.simple_spinner_item
-        ).also { adapter ->
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-            spinnerCount.adapter = adapter
-        }
 
-        ArrayAdapter.createFromResource(
-            this,
-            R.array.tick_values,
-            android.R.layout.simple_spinner_item
-        ).also { adapter ->
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-            spinnerTick.adapter = adapter
-        }
-
-        ArrayAdapter.createFromResource(
-            this,
-            R.array.payload_sizes,
-            android.R.layout.simple_spinner_item
-        ).also { adapter ->
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-            spinnerPayload.adapter = adapter
-        }
 
         startButton.setOnClickListener {
             startTest()
@@ -83,9 +57,9 @@ class MainActivity : AppCompatActivity() {
         statsView.text = "Running..."
         val ip = editIp.text.toString()
         val port = editPort.text.toString().toIntOrNull() ?: return
-        val count = spinnerCount.selectedItem.toString().toInt()
-        val tickMs = spinnerTick.selectedItem.toString().toInt()
-        val payloadSize = spinnerPayload.selectedItem.toString().toInt()
+        val count = editCount.text.toString().toIntOrNull() ?: return
+        val tickMs = editTick.text.toString().toIntOrNull() ?: return
+        val payloadSize = editPayload.text.toString().toIntOrNull() ?: return
 
         lifecycleScope.launch(Dispatchers.IO) {
             val result = runTest(ip, port, count, tickMs, payloadSize)

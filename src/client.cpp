@@ -16,12 +16,16 @@
 
 using Clock = std::chrono::high_resolution_clock;
 
+// Packet header layout used by the server. Pack it so the size is 20 bytes
+// and consistent with the Android implementation.
+#pragma pack(push, 1)
 struct PacketHeader {
     uint32_t seq;
     uint64_t timestamp_ns;
     uint32_t server_id;
     uint32_t tick_ms;
 };
+#pragma pack(pop)
 
 struct Packet {
     uint32_t seq;

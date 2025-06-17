@@ -44,6 +44,10 @@ class MainActivity : AppCompatActivity() {
         graph = findViewById(R.id.graph)
         graph.addSeries(series)
         series.spacing = 50
+        // enable scrolling of the graph when new data arrives
+        graph.viewport.isXAxisBoundsManual = true
+        graph.viewport.setMinX(0.0)
+        graph.viewport.setMaxX(50.0)
 
 
 

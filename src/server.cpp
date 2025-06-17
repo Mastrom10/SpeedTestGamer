@@ -15,6 +15,10 @@ struct Packet {
     uint64_t timestamp_ns;
 };
 
+struct Sync {
+    uint64_t server_time_ns;
+};
+
 static uint64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::high_resolution_clock::now().time_since_epoch()).count();
@@ -74,6 +78,11 @@ int main(int argc, char* argv[]) {
         }
         Request req;
         std::memcpy(&req, buffer, sizeof(req));
+
+        // send sync message with server timestamp so client can estimate clock offset
+        Sync sync{now_ns()};
+        sendto(sock, &sync, sizeof(sync), 0, (sockaddr*)&client, len);
+
         uint32_t count = req.count;
         sockaddr_in client_copy = client;
         socklen_t len_copy = len;

@@ -6,13 +6,80 @@
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
-    <TextView
+    <EditText
+        android:id="@+id/editIp"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:hint="Server IP"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/editPort"
+        app:layout_constraintHorizontalWeight="1" />
+
+    <EditText
+        android:id="@+id/editPort"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:hint="Port"
+        android:inputType="number"
+        app:layout_constraintStart_toEndOf="@id/editIp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/buttonStart"
+        app:layout_constraintHorizontalWeight="1" />
+
+    <Button
+        android:id="@+id/buttonStart"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Hello World!"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+        android:text="Start"
+        app:layout_constraintStart_toEndOf="@id/editPort"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <Spinner
+        android:id="@+id/spinnerCount"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@id/editIp"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintEnd_toStartOf="@id/spinnerTick"
+        app:layout_constraintHorizontalWeight="1" />
+
+    <Spinner
+        android:id="@+id/spinnerTick"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@id/editIp"
+        app:layout_constraintStart_toEndOf="@id/spinnerCount"
+        app:layout_constraintEnd_toStartOf="@id/spinnerPayload"
+        app:layout_constraintHorizontalWeight="1" />
+
+    <Spinner
+        android:id="@+id/spinnerPayload"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@id/editIp"
+        app:layout_constraintStart_toEndOf="@id/spinnerTick"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontalWeight="1" />
+
+    <com.jjoe64.graphview.GraphView
+        android:id="@+id/graph"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/spinnerCount"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/textStats" />
+
+    <TextView
+        android:id="@+id/textStats"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="@string/stats_placeholder"
+        app:layout_constraintTop_toBottomOf="@id/graph"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

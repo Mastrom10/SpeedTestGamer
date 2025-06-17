@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <thread>
+#include <atomic>
 
 // Header sent before every payload packet. Pack the structure so the size
 // matches the 20 bytes expected by the Android client.
@@ -38,6 +39,7 @@ struct Sync {
 };
 
 constexpr int SYNC_COUNT = 5;
+constexpr int SYNC_INTERVAL_MS = 1000;
 
 static uint64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -136,6 +138,17 @@ int main(int argc, char* argv[]) {
         sockaddr_in client_copy = client;
         socklen_t len_copy = len;
         std::thread([sock, client_copy, len_copy, actual_tick, count, server_id, req]() mutable {
+            std::atomic<bool> running(true);
+            std::thread sync_thread([&] {
+                while (running.load()) {
+                    Sync periodic{now_ns(), server_id, actual_tick};
+                    sendto(sock, &periodic, sizeof(periodic), 0,
+                           (sockaddr*)&client_copy, len_copy);
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(SYNC_INTERVAL_MS));
+                }
+            });
+
             PacketHeader hdr{};
             std::vector<uint8_t> buf(sizeof(PacketHeader) + req.payload_size, 0);
             for (uint32_t i = 0; i < count; ++i) {
@@ -148,6 +161,9 @@ int main(int argc, char* argv[]) {
                 if (actual_tick > 0 && i + 1 < count)
                     std::this_thread::sleep_for(std::chrono::milliseconds(actual_tick));
             }
+
+            running = false;
+            sync_thread.join();
         }).detach();
     }
 }

@@ -85,6 +85,10 @@ int main(int argc, char* argv[]) {
     std::strftime(fname, sizeof(fname), "server_%Y%m%d_%H%M%S.log", tm);
     std::ofstream log(fname);
 
+    // Layout must match the Android client which packs these fields without
+    // any padding (4*4 + 8 = 24 bytes). Use pragma pack to ensure the same
+    // size across architectures.
+    #pragma pack(push, 1)
     struct Request {
         uint32_t count;
         uint64_t client_time_ns;
@@ -92,6 +96,7 @@ int main(int argc, char* argv[]) {
         uint32_t payload_size;
         uint32_t tick_request_ms;
     };
+    #pragma pack(pop)
 
     while (true) {
         char buffer[1500];

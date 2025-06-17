@@ -14,7 +14,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toStartOf="@id/editPort"
-        app:layout_constraintHorizontalWeight="1" />
+         />
 
     <EditText
         android:id="@+id/editPort"
@@ -25,7 +25,7 @@
         app:layout_constraintStart_toEndOf="@id/editIp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toStartOf="@id/buttonStart"
-        app:layout_constraintHorizontalWeight="1" />
+      />
 
     <Button
         android:id="@+id/buttonStart"
@@ -43,7 +43,7 @@
         app:layout_constraintTop_toBottomOf="@id/editIp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/spinnerTick"
-        app:layout_constraintHorizontalWeight="1" />
+        />
 
     <Spinner
         android:id="@+id/spinnerTick"
@@ -52,7 +52,7 @@
         app:layout_constraintTop_toBottomOf="@id/editIp"
         app:layout_constraintStart_toEndOf="@id/spinnerCount"
         app:layout_constraintEnd_toStartOf="@id/spinnerPayload"
-        app:layout_constraintHorizontalWeight="1" />
+        />
 
     <Spinner
         android:id="@+id/spinnerPayload"
@@ -61,7 +61,7 @@
         app:layout_constraintTop_toBottomOf="@id/editIp"
         app:layout_constraintStart_toEndOf="@id/spinnerTick"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontalWeight="1" />
+        />
 
     <com.jjoe64.graphview.GraphView
         android:id="@+id/graph"

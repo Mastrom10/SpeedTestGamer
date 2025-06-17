@@ -25,7 +25,8 @@ import java.nio.ByteOrder
 
 class MainActivity : AppCompatActivity() {
 
-    private val SYNC_COUNT = 5
+    private val INIT_SYNC_COUNT = 10
+    private val SYNC_INTERVAL_MS = 5000L
 
     private lateinit var editIp: EditText
     private lateinit var editPort: EditText
@@ -107,46 +108,47 @@ class MainActivity : AppCompatActivity() {
         socket.soTimeout = 1000
         val server = InetAddress.getByName(ip)
 
-        // build request
-        // Request consists of 4 uint32 fields and one uint64 timestamp
-        // => 4*4 + 8 = 24 bytes
-        val bufReq = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
-        bufReq.putInt(count)
-        val sendTime = System.currentTimeMillis() * 1_000_000L
-        bufReq.putLong(sendTime)
-        bufReq.putInt(0) // client_id
-        bufReq.putInt(payloadSize)
-        bufReq.putInt(tickMs)
-        val reqData = bufReq.array()
-        socket.send(DatagramPacket(reqData, reqData.size, server, port))
-
-        // receive multiple sync messages and pick the one with the smallest RTT
-        val syncBuf = ByteArray(16)
-        val syncPacket = DatagramPacket(syncBuf, syncBuf.size)
+        // initial synchronization
+        val reqBuf = ByteArray(8)
+        val respBuf = ByteArray(16)
+        val respPacket = DatagramPacket(respBuf, respBuf.size)
         var offset: Long = 0
         var bestRtt = Long.MAX_VALUE
         try {
-            for (i in 0 until SYNC_COUNT) {
+            for (i in 0 until INIT_SYNC_COUNT) {
                 if (!currentCoroutineContext().isActive) {
                     socket.close()
                     return "Cancelled"
                 }
-                socket.receive(syncPacket)
-                val recvTime = System.currentTimeMillis() * 1_000_000L
-                val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
-                val serverTime = sync.long
-                sync.int // server_id
-                sync.int // tick
-                val rtt = recvTime - sendTime
+                val t0 = System.currentTimeMillis() * 1_000_000L
+                ByteBuffer.wrap(reqBuf).order(ByteOrder.LITTLE_ENDIAN).putLong(0, t0)
+                socket.send(DatagramPacket(reqBuf, reqBuf.size, server, port))
+                socket.receive(respPacket)
+                val t3 = System.currentTimeMillis() * 1_000_000L
+                val bb = ByteBuffer.wrap(respBuf).order(ByteOrder.LITTLE_ENDIAN)
+                val t1 = bb.long
+                val t2 = bb.long
+                val rtt = (t3 - t0) - (t2 - t1)
+                val off = ((t1 - t0) + (t2 - t3)) / 2
                 if (rtt < bestRtt) {
                     bestRtt = rtt
-                    offset = serverTime - (sendTime + rtt / 2)
+                    offset = off
                 }
             }
         } catch (e: Exception) {
             socket.close()
-            return "Failed to receive sync: ${e.message}"
+            return "Failed to sync: ${e.message}"
         }
+
+        // build request
+        val bufReq = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+        bufReq.putInt(count)
+        bufReq.putLong(System.currentTimeMillis() * 1_000_000L)
+        bufReq.putInt(0)
+        bufReq.putInt(payloadSize)
+        bufReq.putInt(tickMs)
+        val reqData = bufReq.array()
+        socket.send(DatagramPacket(reqData, reqData.size, server, port))
 
         val latencies = mutableListOf<Double>()
         var min = Double.MAX_VALUE
@@ -157,11 +159,28 @@ class MainActivity : AppCompatActivity() {
         var x = 0
         val packetBuf = ByteArray(1500)
         var received = 0
+        var nextSync = System.currentTimeMillis() * 1_000_000L + SYNC_INTERVAL_MS * 1_000_000L
+        var waitingSync = false
+        var syncT0 = 0L
+        val syncReq = ByteArray(8)
+        val syncRespBuf = ByteArray(16)
+        val syncRespPacket = DatagramPacket(syncRespBuf, syncRespBuf.size)
+
         while (received < count) {
             if (!currentCoroutineContext().isActive) {
                 socket.close()
                 return "Cancelled"
             }
+
+            val now = System.currentTimeMillis() * 1_000_000L
+            if (!waitingSync && now >= nextSync) {
+                syncT0 = now
+                ByteBuffer.wrap(syncReq).order(ByteOrder.LITTLE_ENDIAN).putLong(0, syncT0)
+                socket.send(DatagramPacket(syncReq, syncReq.size, server, port))
+                waitingSync = true
+                nextSync = now + SYNC_INTERVAL_MS * 1_000_000L
+            }
+
             val pkt = DatagramPacket(packetBuf, packetBuf.size)
             try {
                 socket.receive(pkt)
@@ -169,20 +188,19 @@ class MainActivity : AppCompatActivity() {
                 socket.close()
                 return "Failed to receive packet: ${e.message}"
             }
-            val now = System.currentTimeMillis() * 1_000_000L
-            if (pkt.length == 16) {
-                val bb = ByteBuffer.wrap(pkt.data, 0, 16).order(ByteOrder.LITTLE_ENDIAN)
-                val serverTime = bb.long
-                bb.int
-                bb.int
-                offset = serverTime - (now - bestRtt / 2)
-                withContext(Dispatchers.Main) {
-                    val avg = latencies.average()
-                    statsView.text = String.format(
-                        "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
-                        latencies.size, avg, min, max, lost, outOfOrder, offset / 1_000_000.0
-                    )
+            val recvTime = System.currentTimeMillis() * 1_000_000L
+            if (waitingSync && pkt.length == 16) {
+                ByteBuffer.wrap(syncRespBuf, 0, 16).order(ByteOrder.LITTLE_ENDIAN).apply {
+                    val t1 = long
+                    val t2 = long
+                    val rtt = (recvTime - syncT0) - (t2 - t1)
+                    val off = ((t1 - syncT0) + (t2 - recvTime)) / 2
+                    if (rtt < bestRtt) {
+                        bestRtt = rtt
+                        offset = off
+                    }
                 }
+                waitingSync = false
                 continue
             }
             if (pkt.length < 20) {
@@ -213,7 +231,7 @@ class MainActivity : AppCompatActivity() {
             }
             expectedSeq = seq + 1
 
-            var latency = (now - (ts - offset)) / 1e6
+            var latency = (recvTime - (ts - offset)) / 1e6
             if (latency > 100) {
                 latency = 100.0
                 lost++

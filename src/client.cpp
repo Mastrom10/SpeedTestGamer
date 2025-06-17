@@ -35,13 +35,17 @@ struct Packet {
     std::vector<uint8_t> payload;
 };
 
-struct Sync {
-    uint64_t server_time_ns;
-    uint32_t server_id;
-    uint32_t tick_ms;
+struct SyncRequest {
+    uint64_t client_time_ns; // t0
 };
 
-constexpr int SYNC_COUNT = 5;
+struct SyncResponse {
+    uint64_t recv_time_ns; // t1
+    uint64_t send_time_ns; // t2
+};
+
+constexpr int INIT_SYNC_COUNT = 10;
+constexpr uint64_t SYNC_INTERVAL_NS = 5ULL * 1000ULL * 1000ULL * 1000ULL;
 
 static uint64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -60,8 +64,14 @@ struct Request {
 #pragma pack(pop)
 
 static void print_help(const char* prog) {
-    std::cout << "Usage: " << prog
-              << " -a addr -p port [-n count] [-t tick_ms] [-s payload] [-i id]\n";
+    std::cout << "Usage: " << prog << " [options]\n"
+              << "  -a, --addr <ip>     Server IPv4 address\n"
+              << "  -p, --port <port>   Server UDP port\n"
+              << "  -n, --count <num>   Number of packets to request (default 100)\n"
+              << "  -t, --tick <ms>     Desired tick interval in ms\n"
+              << "  -s, --payload <b>   Payload size in bytes\n"
+              << "  -i, --id <id>       Optional client identifier\n"
+              << "  -h, --help          Show this help message\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -125,14 +135,45 @@ int main(int argc, char* argv[]) {
 
     const size_t DISPLAY = 5;
 
-    // send request to server with number of packets and note send time
+    // initial clock synchronization
+    sockaddr_in from{};
+    socklen_t from_len = sizeof(from);
+    uint64_t best_rtt = std::numeric_limits<uint64_t>::max();
+    int64_t offset_ns = 0;
+    for (int i = 0; i < INIT_SYNC_COUNT; ++i) {
+        SyncRequest sreq{now_ns()};
+        uint64_t t0 = sreq.client_time_ns;
+        if (sendto(sock, &sreq, sizeof(sreq), 0, (sockaddr*)&server, sizeof(server)) < 0) {
+            perror("sendto");
+            return 1;
+        }
+        SyncResponse sresp{};
+        ssize_t n = recvfrom(sock, &sresp, sizeof(sresp), 0,
+                             (sockaddr*)&from, &from_len);
+        if (n < (ssize_t)sizeof(sresp)) {
+            perror("recvfrom");
+            return 1;
+        }
+        uint64_t t3 = now_ns();
+        uint64_t rtt = (t3 - t0) - (sresp.send_time_ns - sresp.recv_time_ns);
+        int64_t off = ((int64_t)sresp.recv_time_ns - (int64_t)t0 +
+                       (int64_t)sresp.send_time_ns - (int64_t)t3) / 2;
+        if (rtt < best_rtt) {
+            best_rtt = rtt;
+            offset_ns = off;
+        }
+    }
+
+    log << "Initial sync offset_ns=" << offset_ns
+        << " rtt_ns=" << best_rtt << "\n";
+
+    // send request to server
     Request req{};
     req.count = static_cast<uint32_t>(count);
     req.client_time_ns = now_ns();
     req.client_id = client_id;
     req.payload_size = payload_size;
     req.tick_request_ms = tick_request_ms;
-    uint64_t send_ns = req.client_time_ns;
     if (sendto(sock, &req, sizeof(req), 0, (sockaddr*)&server, sizeof(server)) < 0) {
         perror("sendto");
         return 1;
@@ -142,35 +183,20 @@ int main(int argc, char* argv[]) {
         << " client_id=" << req.client_id << " payload_size=" << req.payload_size
         << " tick_request_ms=" << req.tick_request_ms << "\n";
 
-    // receive multiple sync messages and pick the one with the smallest RTT
-    sockaddr_in from{};
-    socklen_t from_len = sizeof(from);
-    Sync sync{};
-    uint64_t best_rtt = std::numeric_limits<uint64_t>::max();
-    int64_t offset_ns = 0;
-    for (int i = 0; i < SYNC_COUNT; ++i) {
-        ssize_t n = recvfrom(sock, &sync, sizeof(sync), 0,
-                             (sockaddr*)&from, &from_len);
-        if (n < (ssize_t)sizeof(sync)) {
-            perror("recvfrom");
-            return 1;
-        }
-        uint64_t recv_ns = now_ns();
-        uint64_t rtt = recv_ns - send_ns;
-        int64_t off = static_cast<int64_t>(sync.server_time_ns) -
-                      static_cast<int64_t>(send_ns + rtt / 2);
-        if (rtt < best_rtt) {
-            best_rtt = rtt;
-            offset_ns = off;
-        }
-    }
-
-    log << "RECV Sync best_offset_ns=" << offset_ns
-        << " rtt_ns=" << best_rtt
-        << " server_id=" << sync.server_id
-        << " tick_ms=" << sync.tick_ms << "\n";
+    uint64_t next_sync = now_ns() + SYNC_INTERVAL_NS;
+    bool waiting_sync = false;
+    uint64_t sync_t0 = 0;
 
     for (int i = 0; i < count; ) {
+        uint64_t now = now_ns();
+        if (!waiting_sync && now >= next_sync) {
+            SyncRequest sreq{now};
+            sync_t0 = sreq.client_time_ns;
+            sendto(sock, &sreq, sizeof(sreq), 0, (sockaddr*)&server, sizeof(server));
+            waiting_sync = true;
+            next_sync = now + SYNC_INTERVAL_NS;
+        }
+
         sockaddr_in pkt_from{};
         socklen_t len = sizeof(pkt_from);
         ssize_t n = recvfrom(sock, buffer, sizeof(PacketHeader) + payload_size, 0,
@@ -179,27 +205,28 @@ int main(int argc, char* argv[]) {
             perror("recvfrom");
             continue;
         }
-        if (n == (ssize_t)sizeof(Sync)) {
-            std::memcpy(&sync, buffer, sizeof(sync));
-            uint64_t recv_ns = now_ns();
-            uint64_t rtt = recv_ns - send_ns;
-            int64_t off = static_cast<int64_t>(sync.server_time_ns) -
-                          static_cast<int64_t>(send_ns + rtt / 2);
+
+        uint64_t recv_time = now_ns();
+        if (waiting_sync && n == (ssize_t)sizeof(SyncResponse)) {
+            SyncResponse resp{};
+            std::memcpy(&resp, buffer, sizeof(resp));
+            uint64_t rtt = (recv_time - sync_t0) - (resp.send_time_ns - resp.recv_time_ns);
+            int64_t off = ((int64_t)resp.recv_time_ns - (int64_t)sync_t0 +
+                           (int64_t)resp.send_time_ns - (int64_t)recv_time) / 2;
             if (rtt < best_rtt) {
                 best_rtt = rtt;
                 offset_ns = off;
-                log << "RECV Sync update_offset_ns=" << offset_ns
-                    << " rtt_ns=" << rtt
-                    << " server_id=" << sync.server_id
-                    << " tick_ms=" << sync.tick_ms << "\n";
+                log << "SYNC update offset_ns=" << offset_ns
+                    << " rtt_ns=" << rtt << "\n";
             }
+            waiting_sync = false;
             continue;
         }
+
         if (n < (ssize_t)sizeof(PacketHeader)) {
             perror("recvfrom");
             continue;
         }
-        uint64_t now = now_ns();
         PacketHeader hdr{};
         std::memcpy(&hdr, buffer, sizeof(hdr));
         Packet resp;
@@ -212,7 +239,7 @@ int main(int argc, char* argv[]) {
             std::memcpy(resp.payload.data(), buffer + sizeof(PacketHeader),
                         std::min<size_t>(payload_size, n - sizeof(PacketHeader)));
 
-        double latency_ms = (now - (resp.timestamp_ns - offset_ns)) / 1e6;
+        double latency_ms = (recv_time - (resp.timestamp_ns - offset_ns)) / 1e6;
         latencies.push_back(latency_ms);
         if (latency_ms < min_lat) min_lat = latency_ms;
         if (latency_ms > max_lat) max_lat = latency_ms;

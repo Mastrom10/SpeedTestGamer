@@ -36,11 +36,20 @@ The client displays the last packets in the terminal while logging all measureme
 
 * **Request** (client ➜ server):
   * `uint32_t count` – number of `Packet` messages the client wants to receive.
+  * `uint64_t client_time_ns` – local time when sending the request.
+  * `uint32_t client_id` – identifier of the client session.
+  * `uint32_t payload_size` – desired payload size in bytes.
+  * `uint32_t tick_request_ms` – desired tick interval.
 * **Sync** (server ➜ client):
-  * `uint64_t server_time_ns` – server timestamp when the request was received. Used to estimate clock offset.
+  * `uint64_t server_time_ns` – server timestamp when the request was received.
+  * `uint32_t server_id` – identifier of the server.
+  * `uint32_t tick_ms` – tick interval that will actually be used. Used to estimate clock offset.
 * **Packet** (server ➜ client):
   * `uint32_t seq` – sequence number.
   * `uint64_t timestamp_ns` – server send timestamp in nanoseconds.
+  * `uint32_t server_id` – same identifier as in `Sync`.
+  * `uint32_t tick_ms` – tick interval used.
+  * payload – byte array of length `payload_size`.
 
 ## Latency calculation with unsynchronized clocks
 

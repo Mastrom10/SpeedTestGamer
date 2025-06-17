@@ -4,19 +4,33 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <ctime>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <thread>
 
+struct PacketHeader {
+    uint32_t seq;
+    uint64_t timestamp_ns;
+    uint32_t server_id;
+    uint32_t tick_ms;
+};
+
 struct Packet {
     uint32_t seq;
     uint64_t timestamp_ns;
+    uint32_t server_id;
+    uint32_t tick_ms;
+    std::vector<uint8_t> payload;
 };
 
 struct Sync {
     uint64_t server_time_ns;
+    uint32_t server_id;
+    uint32_t tick_ms;
 };
 
 static uint64_t now_ns() {
@@ -63,8 +77,20 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Server listening on port " << port << std::endl;
 
+    const uint32_t server_id = 1;
+    auto t = std::chrono::system_clock::now();
+    std::time_t tt = std::chrono::system_clock::to_time_t(t);
+    std::tm* tm = std::localtime(&tt);
+    char fname[64];
+    std::strftime(fname, sizeof(fname), "server_%Y%m%d_%H%M%S.log", tm);
+    std::ofstream log(fname);
+
     struct Request {
         uint32_t count;
+        uint64_t client_time_ns;
+        uint32_t client_id;
+        uint32_t payload_size;
+        uint32_t tick_request_ms;
     };
 
     while (true) {
@@ -79,21 +105,33 @@ int main(int argc, char* argv[]) {
         Request req;
         std::memcpy(&req, buffer, sizeof(req));
 
+        log << "REQ count=" << req.count
+            << " client_time_ns=" << req.client_time_ns
+            << " client_id=" << req.client_id
+            << " payload_size=" << req.payload_size
+            << " tick_request_ms=" << req.tick_request_ms << "\n";
+
+        uint32_t actual_tick = tick_ms > 0 ? tick_ms : req.tick_request_ms;
+
         // send sync message with server timestamp so client can estimate clock offset
-        Sync sync{now_ns()};
+        Sync sync{now_ns(), server_id, actual_tick};
         sendto(sock, &sync, sizeof(sync), 0, (sockaddr*)&client, len);
 
         uint32_t count = req.count;
         sockaddr_in client_copy = client;
         socklen_t len_copy = len;
-        std::thread([sock, client_copy, len_copy, tick_ms, count]() mutable {
-            Packet p{};
+        std::thread([sock, client_copy, len_copy, actual_tick, count, server_id, req]() mutable {
+            PacketHeader hdr{};
+            std::vector<uint8_t> buf(sizeof(PacketHeader) + req.payload_size, 0);
             for (uint32_t i = 0; i < count; ++i) {
-                p.seq = i;
-                p.timestamp_ns = now_ns();
-                sendto(sock, &p, sizeof(p), 0, (sockaddr*)&client_copy, len_copy);
-                if (tick_ms > 0 && i + 1 < count)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(tick_ms));
+                hdr.seq = i;
+                hdr.timestamp_ns = now_ns();
+                hdr.server_id = server_id;
+                hdr.tick_ms = actual_tick;
+                std::memcpy(buf.data(), &hdr, sizeof(hdr));
+                sendto(sock, buf.data(), buf.size(), 0, (sockaddr*)&client_copy, len_copy);
+                if (actual_tick > 0 && i + 1 < count)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(actual_tick));
             }
         }).detach();
     }

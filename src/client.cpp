@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <ctime>
+#include <limits>
 
 using Clock = std::chrono::high_resolution_clock;
 
@@ -19,15 +20,18 @@ struct Packet {
     uint64_t timestamp_ns; // send timestamp in nanoseconds
 };
 
+struct Request {
+    uint32_t count;
+};
+
 static void print_help(const char* prog) {
-    std::cout << "Usage: " << prog << " -a addr -p port [-n count] [-s size]\n";
+    std::cout << "Usage: " << prog << " -a addr -p port [-n count]\n";
 }
 
 int main(int argc, char* argv[]) {
     std::string server_ip;
     int port = 0;
     int count = 100;
-    int size = sizeof(Packet);
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-h" || arg == "--help") { print_help(argv[0]); return 0; }
@@ -37,8 +41,6 @@ int main(int argc, char* argv[]) {
             port = std::atoi(argv[++i]);
         } else if ((arg == "-n" || arg == "--count") && i + 1 < argc) {
             count = std::atoi(argv[++i]);
-        } else if ((arg == "-s" || arg == "--size") && i + 1 < argc) {
-            size = std::atoi(argv[++i]);
         } else {
             print_help(argv[0]);
             return 1;
@@ -48,7 +50,6 @@ int main(int argc, char* argv[]) {
         print_help(argv[0]);
         return 1;
     }
-    if (size < (int)sizeof(Packet)) size = sizeof(Packet);
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -65,7 +66,9 @@ int main(int argc, char* argv[]) {
     }
 
     std::vector<double> latencies;
-    char* buffer = new char[size];
+    char* buffer = new char[sizeof(Packet)];
+    double min_lat = std::numeric_limits<double>::max();
+    double max_lat = 0.0;
 
     // prepare log file
     auto t = std::chrono::system_clock::now();
@@ -75,18 +78,19 @@ int main(int argc, char* argv[]) {
     std::strftime(fname, sizeof(fname), "client_%Y%m%d_%H%M%S.log", tm);
     std::ofstream log(fname);
 
-    const size_t DISPLAY = 20;
+    const size_t DISPLAY = 5;
+
+    // send request to server with number of packets
+    Request req{static_cast<uint32_t>(count)};
+    if (sendto(sock, &req, sizeof(req), 0, (sockaddr*)&server, sizeof(server)) < 0) {
+        perror("sendto");
+        return 1;
+    }
+
     for (int i = 0; i < count; ++i) {
-        Packet p{static_cast<uint32_t>(i),
-                 (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()};
-        std::memcpy(buffer, &p, sizeof(p));
-        if (sendto(sock, buffer, size, 0, (sockaddr*)&server, sizeof(server)) < 0) {
-            perror("sendto");
-            continue;
-        }
         sockaddr_in from{};
         socklen_t len = sizeof(from);
-        ssize_t n = recvfrom(sock, buffer, size, 0, (sockaddr*)&from, &len);
+        ssize_t n = recvfrom(sock, buffer, sizeof(Packet), 0, (sockaddr*)&from, &len);
         if (n < (ssize_t)sizeof(Packet)) {
             perror("recvfrom");
             continue;
@@ -96,6 +100,8 @@ int main(int argc, char* argv[]) {
         std::memcpy(&resp, buffer, sizeof(resp));
         double latency_ms = (now_ns - resp.timestamp_ns) / 1e6;
         latencies.push_back(latency_ms);
+        if (latency_ms < min_lat) min_lat = latency_ms;
+        if (latency_ms > max_lat) max_lat = latency_ms;
         log << resp.seq << "," << latency_ms << "\n";
 
         std::cout << "\033[2J\033[H";
@@ -106,13 +112,17 @@ int main(int argc, char* argv[]) {
         double sum = 0.0;
         for (double l : latencies) sum += l;
         double avg = latencies.empty() ? 0 : sum / latencies.size();
-        std::cout << "Packets:" << latencies.size() << " Avg(ms):" << std::fixed << std::setprecision(2) << avg << std::flush;
+        std::cout << "Packets:" << latencies.size() << " Avg(ms):" << std::fixed
+                  << std::setprecision(2) << avg
+                  << " Min:" << std::setprecision(2) << min_lat
+                  << " Max:" << std::setprecision(2) << max_lat << std::flush;
     }
 
     double sum = 0;
     for (double l : latencies) sum += l;
     double avg = latencies.empty() ? 0 : sum / latencies.size();
-    std::cout << "\nAverage latency: " << avg << " ms" << std::endl;
+    std::cout << "\nAvg: " << avg << " ms Min: " << min_lat
+              << " ms Max: " << max_lat << " ms" << std::endl;
 
     delete[] buffer;
     close(sock);

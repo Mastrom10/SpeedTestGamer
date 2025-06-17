@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
         // => 4*4 + 8 = 24 bytes
         val bufReq = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
         bufReq.putInt(count)
-        val sendTime = System.nanoTime()
+        val sendTime = System.currentTimeMillis() * 1_000_000L
         bufReq.putLong(sendTime)
         bufReq.putInt(0) // client_id
         bufReq.putInt(payloadSize)
@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         val offset: Long
         try {
             socket.receive(syncPacket)
-            val recvTime = System.nanoTime()
+            val recvTime = System.currentTimeMillis() * 1_000_000L
             val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
             val serverTime = sync.long
             sync.int // server_id
@@ -116,7 +116,7 @@ class MainActivity : AppCompatActivity() {
                 socket.close()
                 return "Failed to receive packet: ${e.message}"
             }
-            val now = System.nanoTime()
+            val now = System.currentTimeMillis() * 1_000_000L
             val hdr = ByteBuffer.wrap(pkt.data, 0, 20).order(ByteOrder.LITTLE_ENDIAN)
             hdr.int // seq
             val ts = hdr.long
@@ -128,7 +128,7 @@ class MainActivity : AppCompatActivity() {
             if (latency > max) max = latency
 
             withContext(Dispatchers.Main) {
-                series.appendData(DataPoint(i.toDouble(), latency), true, count)
+                series.appendData(DataPoint(i.toDouble(), latency), true, 50)
                 val avg = latencies.average()
                 statsView.text = String.format(
                     "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms",

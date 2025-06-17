@@ -116,13 +116,19 @@ class MainActivity : AppCompatActivity() {
         // receive sync
         val syncBuf = ByteArray(16)
         val syncPacket = DatagramPacket(syncBuf, syncBuf.size)
-        socket.receive(syncPacket)
-        val recvTime = System.nanoTime()
-        val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
-        val serverTime = sync.long
-        sync.int // server_id
-        val usedTick = sync.int
-        val offset = serverTime - (sendTime + (recvTime - sendTime) / 2)
+        val offset: Long
+        try {
+            socket.receive(syncPacket)
+            val recvTime = System.nanoTime()
+            val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
+            val serverTime = sync.long
+            sync.int // server_id
+            sync.int // tick
+            offset = serverTime - (sendTime + (recvTime - sendTime) / 2)
+        } catch (e: Exception) {
+            socket.close()
+            return "Failed to receive sync: ${e.message}"
+        }
 
         val latencies = mutableListOf<Double>()
         var min = Double.MAX_VALUE
@@ -130,7 +136,12 @@ class MainActivity : AppCompatActivity() {
         val packetBuf = ByteArray(1500)
         for (i in 0 until count) {
             val pkt = DatagramPacket(packetBuf, packetBuf.size)
-            socket.receive(pkt)
+            try {
+                socket.receive(pkt)
+            } catch (e: Exception) {
+                socket.close()
+                return "Failed to receive packet: ${e.message}"
+            }
             val now = System.nanoTime()
             val hdr = ByteBuffer.wrap(pkt.data, 0, 20).order(ByteOrder.LITTLE_ENDIAN)
             hdr.int // seq

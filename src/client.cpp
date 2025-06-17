@@ -42,6 +42,8 @@ static uint64_t now_ns() {
         Clock::now().time_since_epoch()).count();
 }
 
+// Same layout as used by the Android client (packed to 24 bytes).
+#pragma pack(push, 1)
 struct Request {
     uint32_t count;
     uint64_t client_time_ns;
@@ -49,6 +51,7 @@ struct Request {
     uint32_t payload_size;
     uint32_t tick_request_ms;
 };
+#pragma pack(pop)
 
 static void print_help(const char* prog) {
     std::cout << "Usage: " << prog

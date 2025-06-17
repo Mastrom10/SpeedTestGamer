@@ -12,6 +12,9 @@ import com.jjoe64.graphview.ValueDependentColor
 import com.jjoe64.graphview.series.DataPoint
 import com.jjoe64.graphview.series.BarGraphSeries
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
@@ -33,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statsView: TextView
     private lateinit var graph: GraphView
     private val series = BarGraphSeries<DataPoint>()
+    private var testJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,8 +70,14 @@ class MainActivity : AppCompatActivity() {
 
 
 
+        loadPrefs()
+
         startButton.setOnClickListener {
-            startTest()
+            if (testJob?.isActive == true) {
+                testJob?.cancel()
+            } else {
+                startTest()
+            }
         }
     }
 
@@ -80,9 +90,13 @@ class MainActivity : AppCompatActivity() {
         val tickMs = editTick.text.toString().toIntOrNull() ?: return
         val payloadSize = editPayload.text.toString().toIntOrNull() ?: return
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        savePrefs(ip, port, count, tickMs, payloadSize)
+
+        startButton.text = "Stop"
+        testJob = lifecycleScope.launch(Dispatchers.IO) {
             val result = runTest(ip, port, count, tickMs, payloadSize)
             withContext(Dispatchers.Main) {
+                startButton.text = "Start"
                 statsView.text = result
             }
         }
@@ -90,7 +104,7 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun runTest(ip: String, port: Int, count: Int, tickMs: Int, payloadSize: Int): String {
         val socket = DatagramSocket()
-        socket.soTimeout = 3000
+        socket.soTimeout = 1000
         val server = InetAddress.getByName(ip)
 
         // build request
@@ -113,6 +127,10 @@ class MainActivity : AppCompatActivity() {
         var bestRtt = Long.MAX_VALUE
         try {
             for (i in 0 until SYNC_COUNT) {
+                if (!currentCoroutineContext().isActive) {
+                    socket.close()
+                    return "Cancelled"
+                }
                 socket.receive(syncPacket)
                 val recvTime = System.currentTimeMillis() * 1_000_000L
                 val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
@@ -121,10 +139,8 @@ class MainActivity : AppCompatActivity() {
                 sync.int // tick
                 val rtt = recvTime - sendTime
                 val off = serverTime - (sendTime + rtt / 2)
-                if (rtt < bestRtt) {
-                    bestRtt = rtt
-                    offset = off
-                }
+                bestRtt = kotlin.math.min(bestRtt, rtt)
+                offset = off
             }
         } catch (e: Exception) {
             socket.close()
@@ -141,6 +157,10 @@ class MainActivity : AppCompatActivity() {
         val packetBuf = ByteArray(1500)
         var received = 0
         while (received < count) {
+            if (!currentCoroutineContext().isActive) {
+                socket.close()
+                return "Cancelled"
+            }
             val pkt = DatagramPacket(packetBuf, packetBuf.size)
             try {
                 socket.receive(pkt)
@@ -156,10 +176,8 @@ class MainActivity : AppCompatActivity() {
                 bb.int
                 val rtt = now - sendTime
                 val off = serverTime - (sendTime + rtt / 2)
-                if (rtt < bestRtt) {
-                    bestRtt = rtt
-                    offset = off
-                }
+                bestRtt = kotlin.math.min(bestRtt, rtt)
+                offset = off
                 withContext(Dispatchers.Main) {
                     val avg = latencies.average()
                     statsView.text = String.format(
@@ -224,5 +242,25 @@ class MainActivity : AppCompatActivity() {
             "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
             avg, min, max, lost, outOfOrder, offset / 1_000_000.0
         )
+    }
+
+    private fun savePrefs(ip: String, port: Int, count: Int, tick: Int, payload: Int) {
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        prefs.edit().apply {
+            putString("ip", ip)
+            putInt("port", port)
+            putInt("count", count)
+            putInt("tick", tick)
+            putInt("payload", payload)
+        }.apply()
+    }
+
+    private fun loadPrefs() {
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        editIp.setText(prefs.getString("ip", ""))
+        editPort.setText(prefs.getInt("port", 0).takeIf { it != 0 }?.toString() ?: "")
+        editCount.setText(prefs.getInt("count", 0).takeIf { it != 0 }?.toString() ?: "")
+        editTick.setText(prefs.getInt("tick", 0).takeIf { it != 0 }?.toString() ?: "")
+        editPayload.setText(prefs.getInt("payload", 0).takeIf { it != 0 }?.toString() ?: "")
     }
 }

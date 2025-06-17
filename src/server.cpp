@@ -9,7 +9,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <thread>
-#include <atomic>
 
 struct Packet {
     uint32_t seq;
@@ -60,39 +59,33 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Server listening on port " << port << std::endl;
 
-    sockaddr_in last_client{};
-    socklen_t last_len = sizeof(last_client);
-    std::atomic_bool have_client(false);
-
-    std::thread tick_thread;
-    if (tick_ms > 0) {
-        tick_thread = std::thread([&]() {
-            Packet p{};
-            while (true) {
-                if (have_client.load()) {
-                    p.timestamp_ns = now_ns();
-                    sendto(sock, &p, sizeof(p), 0, (sockaddr*)&last_client, last_len);
-                    ++p.seq;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(tick_ms));
-            }
-        });
-    }
+    struct Request {
+        uint32_t count;
+    };
 
     while (true) {
         char buffer[1500];
         sockaddr_in client{};
         socklen_t len = sizeof(client);
         ssize_t n = recvfrom(sock, buffer, sizeof(buffer), 0, (sockaddr*)&client, &len);
-        if (n < 0) {
+        if (n < (ssize_t)sizeof(Request)) {
             perror("recvfrom");
             continue;
         }
-        last_client = client;
-        last_len = len;
-        have_client.store(true);
-        sendto(sock, buffer, n, 0, (sockaddr*)&client, len);
+        Request req;
+        std::memcpy(&req, buffer, sizeof(req));
+        uint32_t count = req.count;
+        sockaddr_in client_copy = client;
+        socklen_t len_copy = len;
+        std::thread([sock, client_copy, len_copy, tick_ms, count]() mutable {
+            Packet p{};
+            for (uint32_t i = 0; i < count; ++i) {
+                p.seq = i;
+                p.timestamp_ns = now_ns();
+                sendto(sock, &p, sizeof(p), 0, (sockaddr*)&client_copy, len_copy);
+                if (tick_ms > 0 && i + 1 < count)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(tick_ms));
+            }
+        }).detach();
     }
-
-    if (tick_thread.joinable()) tick_thread.join();
 }

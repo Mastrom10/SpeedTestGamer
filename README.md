@@ -1,6 +1,6 @@
 # SpeedTestGamer
 
-This project provides a simple UDP based "speedtest" tool intended for gaming scenarios. It consists of a server and a client written in C++. The client sends packets at a configurable rate and size and measures round-trip latency for each packet individually.
+This project provides a simple UDP based "speedtest" tool intended for gaming scenarios. It consists of a server and a client written in C++. The client requests a number of packets and the server sends them back at the configured tick interval while each packet carries a timestamp to measure latency.
 
 ## Building
 
@@ -24,10 +24,10 @@ Start the server (default port 9000). You can optionally set the tick interval i
 ./dist/server [-p port] [-t tick_ms]
 ```
 
-Run the client specifying server IP and port. Additional parameters control packet count and size (in bytes). Results are also written to a log file:
+Run the client specifying server IP and port. An optional parameter controls how many packets will be sent by the server. Results are also written to a log file:
 
 ```sh
-./dist/client -a <server_ip> -p <server_port> [-n count] [-s size]
+./dist/client -a <server_ip> -p <server_port> [-n count]
 ```
 
 The client displays the last packets in the terminal while logging all measurements to a timestamped file.

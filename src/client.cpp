@@ -20,6 +20,15 @@ struct Packet {
     uint64_t timestamp_ns; // send timestamp in nanoseconds
 };
 
+struct Sync {
+    uint64_t server_time_ns;
+};
+
+static uint64_t now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now().time_since_epoch()).count();
+}
+
 struct Request {
     uint32_t count;
 };
@@ -80,25 +89,39 @@ int main(int argc, char* argv[]) {
 
     const size_t DISPLAY = 5;
 
-    // send request to server with number of packets
+    // send request to server with number of packets and note send time
     Request req{static_cast<uint32_t>(count)};
+    uint64_t send_ns = now_ns();
     if (sendto(sock, &req, sizeof(req), 0, (sockaddr*)&server, sizeof(server)) < 0) {
         perror("sendto");
         return 1;
     }
 
+    // receive sync message containing server timestamp to estimate clock offset
+    sockaddr_in from{};
+    socklen_t from_len = sizeof(from);
+    Sync sync{};
+    ssize_t n = recvfrom(sock, &sync, sizeof(sync), 0, (sockaddr*)&from, &from_len);
+    if (n < (ssize_t)sizeof(sync)) {
+        perror("recvfrom");
+        return 1;
+    }
+    uint64_t recv_ns = now_ns();
+    int64_t offset_ns = static_cast<int64_t>(sync.server_time_ns) -
+                        static_cast<int64_t>(send_ns + (recv_ns - send_ns) / 2);
+
     for (int i = 0; i < count; ++i) {
-        sockaddr_in from{};
-        socklen_t len = sizeof(from);
-        ssize_t n = recvfrom(sock, buffer, sizeof(Packet), 0, (sockaddr*)&from, &len);
+        sockaddr_in pkt_from{};
+        socklen_t len = sizeof(pkt_from);
+        ssize_t n = recvfrom(sock, buffer, sizeof(Packet), 0, (sockaddr*)&pkt_from, &len);
         if (n < (ssize_t)sizeof(Packet)) {
             perror("recvfrom");
             continue;
         }
-        uint64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+        uint64_t now = now_ns();
         Packet resp;
         std::memcpy(&resp, buffer, sizeof(resp));
-        double latency_ms = (now_ns - resp.timestamp_ns) / 1e6;
+        double latency_ms = (now - (resp.timestamp_ns - offset_ns)) / 1e6;
         latencies.push_back(latency_ms);
         if (latency_ms < min_lat) min_lat = latency_ms;
         if (latency_ms > max_lat) max_lat = latency_ms;

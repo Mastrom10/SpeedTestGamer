@@ -31,3 +31,29 @@ Run the client specifying server IP and port. An optional parameter controls how
 ```
 
 The client displays the last packets in the terminal while logging all measurements to a timestamped file.
+
+## Packet formats
+
+* **Request** (client ➜ server):
+  * `uint32_t count` – number of `Packet` messages the client wants to receive.
+* **Sync** (server ➜ client):
+  * `uint64_t server_time_ns` – server timestamp when the request was received. Used to estimate clock offset.
+* **Packet** (server ➜ client):
+  * `uint32_t seq` – sequence number.
+  * `uint64_t timestamp_ns` – server send timestamp in nanoseconds.
+
+## Latency calculation with unsynchronized clocks
+
+When the client sends the `Request` it notes the local send time `t_send`. The server immediately replies with a `Sync` message containing its own timestamp `t_srv`. Upon reception the client records `t_recv` and computes the clock offset as:
+
+```
+offset_ns = t_srv - (t_send + (t_recv - t_send)/2)
+```
+
+This offset is subtracted from the timestamps of every `Packet` before computing latency. The adjusted latency becomes:
+
+```
+latency_ms = (client_now - (packet.timestamp_ns - offset_ns)) / 1e6
+```
+
+Assuming roughly symmetric network delay, this compensates for differences between the client and server clocks so that the measured latency reflects only the network delay.

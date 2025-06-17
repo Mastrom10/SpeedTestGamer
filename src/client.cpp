@@ -41,6 +41,8 @@ struct Sync {
     uint32_t tick_ms;
 };
 
+constexpr int SYNC_COUNT = 5;
+
 static uint64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now().time_since_epoch()).count();
@@ -140,20 +142,31 @@ int main(int argc, char* argv[]) {
         << " client_id=" << req.client_id << " payload_size=" << req.payload_size
         << " tick_request_ms=" << req.tick_request_ms << "\n";
 
-    // receive sync message containing server timestamp to estimate clock offset
+    // receive multiple sync messages and pick the one with the smallest RTT
     sockaddr_in from{};
     socklen_t from_len = sizeof(from);
     Sync sync{};
-    ssize_t n = recvfrom(sock, &sync, sizeof(sync), 0, (sockaddr*)&from, &from_len);
-    if (n < (ssize_t)sizeof(sync)) {
-        perror("recvfrom");
-        return 1;
+    uint64_t best_rtt = std::numeric_limits<uint64_t>::max();
+    int64_t offset_ns = 0;
+    for (int i = 0; i < SYNC_COUNT; ++i) {
+        ssize_t n = recvfrom(sock, &sync, sizeof(sync), 0,
+                             (sockaddr*)&from, &from_len);
+        if (n < (ssize_t)sizeof(sync)) {
+            perror("recvfrom");
+            return 1;
+        }
+        uint64_t recv_ns = now_ns();
+        uint64_t rtt = recv_ns - send_ns;
+        int64_t off = static_cast<int64_t>(sync.server_time_ns) -
+                      static_cast<int64_t>(send_ns + rtt / 2);
+        if (rtt < best_rtt) {
+            best_rtt = rtt;
+            offset_ns = off;
+        }
     }
-    uint64_t recv_ns = now_ns();
-    int64_t offset_ns = static_cast<int64_t>(sync.server_time_ns) -
-                        static_cast<int64_t>(send_ns + (recv_ns - send_ns) / 2);
 
-    log << "RECV Sync server_time_ns=" << sync.server_time_ns
+    log << "RECV Sync best_offset_ns=" << offset_ns
+        << " rtt_ns=" << best_rtt
         << " server_id=" << sync.server_id
         << " tick_ms=" << sync.tick_ms << "\n";
 

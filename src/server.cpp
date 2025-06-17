@@ -37,6 +37,8 @@ struct Sync {
     uint32_t tick_ms;
 };
 
+constexpr int SYNC_COUNT = 5;
+
 static uint64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::high_resolution_clock::now().time_since_epoch()).count();
@@ -122,9 +124,13 @@ int main(int argc, char* argv[]) {
 
         uint32_t actual_tick = tick_ms > 0 ? tick_ms : req.tick_request_ms;
 
-        // send sync message with server timestamp so client can estimate clock offset
+        // send multiple sync messages so the client can pick the one with
+        // the smallest observed round-trip time for a better clock offset
         Sync sync{now_ns(), server_id, actual_tick};
-        sendto(sock, &sync, sizeof(sync), 0, (sockaddr*)&client, len);
+        for (int i = 0; i < SYNC_COUNT; ++i) {
+            sendto(sock, &sync, sizeof(sync), 0, (sockaddr*)&client, len);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
 
         uint32_t count = req.count;
         sockaddr_in client_copy = client;

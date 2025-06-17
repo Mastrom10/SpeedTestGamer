@@ -101,7 +101,9 @@ class MainActivity : AppCompatActivity() {
         val server = InetAddress.getByName(ip)
 
         // build request
-        val bufReq = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN)
+        // Request consists of 4 uint32 fields and one uint64 timestamp
+        // => 4*4 + 8 = 24 bytes
+        val bufReq = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
         bufReq.putInt(count)
         val sendTime = System.nanoTime()
         bufReq.putLong(sendTime)

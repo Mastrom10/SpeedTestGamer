@@ -12,12 +12,16 @@
 #include <unistd.h>
 #include <thread>
 
+// Header sent before every payload packet. Pack the structure so the size
+// matches the 20 bytes expected by the Android client.
+#pragma pack(push, 1)
 struct PacketHeader {
     uint32_t seq;
     uint64_t timestamp_ns;
     uint32_t server_id;
     uint32_t tick_ms;
 };
+#pragma pack(pop)
 
 struct Packet {
     uint32_t seq;

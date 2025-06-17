@@ -22,6 +22,8 @@ import java.nio.ByteOrder
 
 class MainActivity : AppCompatActivity() {
 
+    private val SYNC_COUNT = 5
+
     private lateinit var editIp: EditText
     private lateinit var editPort: EditText
     private lateinit var startButton: Button
@@ -104,18 +106,26 @@ class MainActivity : AppCompatActivity() {
         val reqData = bufReq.array()
         socket.send(DatagramPacket(reqData, reqData.size, server, port))
 
-        // receive sync
+        // receive multiple sync messages and pick the one with the smallest RTT
         val syncBuf = ByteArray(16)
         val syncPacket = DatagramPacket(syncBuf, syncBuf.size)
-        val offset: Long
+        var offset: Long = 0
+        var bestRtt = Long.MAX_VALUE
         try {
-            socket.receive(syncPacket)
-            val recvTime = System.currentTimeMillis() * 1_000_000L
-            val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
-            val serverTime = sync.long
-            sync.int // server_id
-            sync.int // tick
-            offset = serverTime - (sendTime + (recvTime - sendTime) / 2)
+            for (i in 0 until SYNC_COUNT) {
+                socket.receive(syncPacket)
+                val recvTime = System.currentTimeMillis() * 1_000_000L
+                val sync = ByteBuffer.wrap(syncBuf).order(ByteOrder.LITTLE_ENDIAN)
+                val serverTime = sync.long
+                sync.int // server_id
+                sync.int // tick
+                val rtt = recvTime - sendTime
+                val off = serverTime - (sendTime + rtt / 2)
+                if (rtt < bestRtt) {
+                    bestRtt = rtt
+                    offset = off
+                }
+            }
         } catch (e: Exception) {
             socket.close()
             return "Failed to receive sync: ${e.message}"

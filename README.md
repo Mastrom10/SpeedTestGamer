@@ -47,7 +47,9 @@ An Android front end is provided in `android-client`. It mirrors the C++ client 
 * **Sync** (server ➜ client):
   * `uint64_t server_time_ns` – server timestamp when the request was received.
   * `uint32_t server_id` – identifier of the server.
-  * `uint32_t tick_ms` – tick interval that will actually be used. Used to estimate clock offset.
+  * `uint32_t tick_ms` – tick interval that will actually be used. Multiple `Sync`
+    messages are sent so the client can pick the one with the smallest round-trip
+    time to estimate the clock offset.
 * **Packet** (server ➜ client):
   * `uint32_t seq` – sequence number.
   * `uint64_t timestamp_ns` – server send timestamp in nanoseconds.
@@ -57,13 +59,18 @@ An Android front end is provided in `android-client`. It mirrors the C++ client 
 
 ## Latency calculation with unsynchronized clocks
 
-When the client sends the `Request` it notes the local send time `t_send`. The server immediately replies with a `Sync` message containing its own timestamp `t_srv`. Upon reception the client records `t_recv` and computes the clock offset as:
+When the client sends the `Request` it notes the local send time `t_send`. The
+server replies with several `Sync` messages containing the timestamp `t_srv`
+taken when the request was received. For each sync message the client records the
+arrival time `t_recv` and computes a potential clock offset as:
 
 ```
 offset_ns = t_srv - (t_send + (t_recv - t_send)/2)
 ```
 
-This offset is subtracted from the timestamps of every `Packet` before computing latency. The adjusted latency becomes:
+The offset corresponding to the smallest observed round-trip time is used. This
+offset is subtracted from the timestamps of every `Packet` before computing
+latency. The adjusted latency becomes:
 
 ```
 latency_ms = (client_now - (packet.timestamp_ns - offset_ns)) / 1e6

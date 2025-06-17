@@ -138,9 +138,10 @@ class MainActivity : AppCompatActivity() {
                 sync.int // server_id
                 sync.int // tick
                 val rtt = recvTime - sendTime
-                val off = serverTime - (sendTime + rtt / 2)
-                bestRtt = kotlin.math.min(bestRtt, rtt)
-                offset = off
+                if (rtt < bestRtt) {
+                    bestRtt = rtt
+                    offset = serverTime - (sendTime + rtt / 2)
+                }
             }
         } catch (e: Exception) {
             socket.close()
@@ -174,10 +175,7 @@ class MainActivity : AppCompatActivity() {
                 val serverTime = bb.long
                 bb.int
                 bb.int
-                val rtt = now - sendTime
-                val off = serverTime - (sendTime + rtt / 2)
-                bestRtt = kotlin.math.min(bestRtt, rtt)
-                offset = off
+                offset = serverTime - (now - bestRtt / 2)
                 withContext(Dispatchers.Main) {
                     val avg = latencies.average()
                     statsView.text = String.format(

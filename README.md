@@ -49,7 +49,8 @@ An Android front end is provided in `android-client`. It mirrors the C++ client 
   * `uint32_t server_id` – identifier of the server.
   * `uint32_t tick_ms` – tick interval that will actually be used. Multiple `Sync`
     messages are sent so the client can pick the one with the smallest round-trip
-    time to estimate the clock offset.
+    time to estimate the clock offset. The server continues to send a sync message
+    every second while packets are transmitted so the client can refine the offset.
 * **Packet** (server ➜ client):
   * `uint32_t seq` – sequence number.
   * `uint64_t timestamp_ns` – server send timestamp in nanoseconds.

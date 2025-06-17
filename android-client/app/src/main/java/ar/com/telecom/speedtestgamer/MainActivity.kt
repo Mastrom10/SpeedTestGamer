@@ -139,7 +139,8 @@ class MainActivity : AppCompatActivity() {
         var expectedSeq = 0
         var x = 0
         val packetBuf = ByteArray(1500)
-        for (i in 0 until count) {
+        var received = 0
+        while (received < count) {
             val pkt = DatagramPacket(packetBuf, packetBuf.size)
             try {
                 socket.receive(pkt)
@@ -148,6 +149,29 @@ class MainActivity : AppCompatActivity() {
                 return "Failed to receive packet: ${e.message}"
             }
             val now = System.currentTimeMillis() * 1_000_000L
+            if (pkt.length == 16) {
+                val bb = ByteBuffer.wrap(pkt.data, 0, 16).order(ByteOrder.LITTLE_ENDIAN)
+                val serverTime = bb.long
+                bb.int
+                bb.int
+                val rtt = now - sendTime
+                val off = serverTime - (sendTime + rtt / 2)
+                if (rtt < bestRtt) {
+                    bestRtt = rtt
+                    offset = off
+                }
+                withContext(Dispatchers.Main) {
+                    val avg = latencies.average()
+                    statsView.text = String.format(
+                        "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
+                        latencies.size, avg, min, max, lost, outOfOrder, offset / 1_000_000.0
+                    )
+                }
+                continue
+            }
+            if (pkt.length < 20) {
+                continue
+            }
             val hdr = ByteBuffer.wrap(pkt.data, 0, 20).order(ByteOrder.LITTLE_ENDIAN)
             val seq = hdr.int
             val ts = hdr.long
@@ -162,8 +186,8 @@ class MainActivity : AppCompatActivity() {
                         series.appendData(DataPoint(x.toDouble(), 100.0), true, 50)
                         val avg = latencies.average()
                         statsView.text = String.format(
-                            "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d",
-                            latencies.size, avg, min, max, lost, outOfOrder
+                            "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
+                            latencies.size, avg, min, max, lost, outOfOrder, offset / 1_000_000.0
                         )
                     }
                     x++
@@ -186,18 +210,19 @@ class MainActivity : AppCompatActivity() {
                 series.appendData(DataPoint(x.toDouble(), latency), true, 50)
                 val avg = latencies.average()
                 statsView.text = String.format(
-                    "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d",
-                    latencies.size, avg, min, max, lost, outOfOrder
+                    "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
+                    latencies.size, avg, min, max, lost, outOfOrder, offset / 1_000_000.0
                 )
             }
             x++
+            received++
         }
 
         socket.close()
         val avg = latencies.average()
         return String.format(
-            "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d",
-            avg, min, max, lost, outOfOrder
+            "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
+            avg, min, max, lost, outOfOrder, offset / 1_000_000.0
         )
     }
 }

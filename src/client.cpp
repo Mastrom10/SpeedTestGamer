@@ -170,11 +170,31 @@ int main(int argc, char* argv[]) {
         << " server_id=" << sync.server_id
         << " tick_ms=" << sync.tick_ms << "\n";
 
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ) {
         sockaddr_in pkt_from{};
         socklen_t len = sizeof(pkt_from);
         ssize_t n = recvfrom(sock, buffer, sizeof(PacketHeader) + payload_size, 0,
                              (sockaddr*)&pkt_from, &len);
+        if (n < 0) {
+            perror("recvfrom");
+            continue;
+        }
+        if (n == (ssize_t)sizeof(Sync)) {
+            std::memcpy(&sync, buffer, sizeof(sync));
+            uint64_t recv_ns = now_ns();
+            uint64_t rtt = recv_ns - send_ns;
+            int64_t off = static_cast<int64_t>(sync.server_time_ns) -
+                          static_cast<int64_t>(send_ns + rtt / 2);
+            if (rtt < best_rtt) {
+                best_rtt = rtt;
+                offset_ns = off;
+                log << "RECV Sync update_offset_ns=" << offset_ns
+                    << " rtt_ns=" << rtt
+                    << " server_id=" << sync.server_id
+                    << " tick_ms=" << sync.tick_ms << "\n";
+            }
+            continue;
+        }
         if (n < (ssize_t)sizeof(PacketHeader)) {
             perror("recvfrom");
             continue;
@@ -214,13 +234,16 @@ int main(int argc, char* argv[]) {
                   << std::setprecision(2) << avg
                   << " Min:" << std::setprecision(2) << min_lat
                   << " Max:" << std::setprecision(2) << max_lat << std::flush;
+
+        ++i;
     }
 
     double sum = 0;
     for (double l : latencies) sum += l;
     double avg = latencies.empty() ? 0 : sum / latencies.size();
     std::cout << "\nAvg: " << avg << " ms Min: " << min_lat
-              << " ms Max: " << max_lat << " ms" << std::endl;
+              << " ms Max: " << max_lat
+              << " ms Offset: " << offset_ns / 1e6 << " ms" << std::endl;
 
     delete[] buffer;
     close(sock);

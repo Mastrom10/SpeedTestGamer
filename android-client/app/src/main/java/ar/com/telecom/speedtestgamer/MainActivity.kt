@@ -6,7 +6,9 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import android.graphics.Color
 import com.jjoe64.graphview.GraphView
+import com.jjoe64.graphview.ValueDependentColor
 import com.jjoe64.graphview.series.DataPoint
 import com.jjoe64.graphview.series.BarGraphSeries
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +50,17 @@ class MainActivity : AppCompatActivity() {
         graph.viewport.isXAxisBoundsManual = true
         graph.viewport.setMinX(0.0)
         graph.viewport.setMaxX(50.0)
+        graph.viewport.isYAxisBoundsManual = true
+        graph.viewport.setMinY(0.0)
+        graph.viewport.setMaxY(100.0)
+        series.valueDependentColor = ValueDependentColor { point ->
+            when {
+                point.y < 40 -> Color.GREEN
+                point.y < 70 -> Color.YELLOW
+                point.y >= 100 -> Color.rgb(139, 0, 0)
+                else -> Color.RED
+            }
+        }
 
 
 
@@ -111,6 +124,10 @@ class MainActivity : AppCompatActivity() {
         val latencies = mutableListOf<Double>()
         var min = Double.MAX_VALUE
         var max = 0.0
+        var lost = 0
+        var outOfOrder = 0
+        var expectedSeq = 0
+        var x = 0
         val packetBuf = ByteArray(1500)
         for (i in 0 until count) {
             val pkt = DatagramPacket(packetBuf, packetBuf.size)
@@ -122,30 +139,55 @@ class MainActivity : AppCompatActivity() {
             }
             val now = System.currentTimeMillis() * 1_000_000L
             val hdr = ByteBuffer.wrap(pkt.data, 0, 20).order(ByteOrder.LITTLE_ENDIAN)
-            hdr.int // seq
+            val seq = hdr.int
             val ts = hdr.long
             hdr.int // server_id
             hdr.int // tick
-            val latency = (now - (ts - offset)) / 1e6
+            if (seq > expectedSeq) {
+                for (m in expectedSeq until seq) {
+                    lost++
+                    latencies.add(100.0)
+                    if (100.0 > max) max = 100.0
+                    withContext(Dispatchers.Main) {
+                        series.appendData(DataPoint(x.toDouble(), 100.0), true, 50)
+                        val avg = latencies.average()
+                        statsView.text = String.format(
+                            "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d",
+                            latencies.size, avg, min, max, lost, outOfOrder
+                        )
+                    }
+                    x++
+                }
+            } else if (seq < expectedSeq) {
+                outOfOrder++
+            }
+            expectedSeq = seq + 1
+
+            var latency = (now - (ts - offset)) / 1e6
+            if (latency > 100) {
+                latency = 100.0
+                lost++
+            }
             latencies.add(latency)
             if (latency < min) min = latency
             if (latency > max) max = latency
 
             withContext(Dispatchers.Main) {
-                series.appendData(DataPoint(i.toDouble(), latency), true, 50)
+                series.appendData(DataPoint(x.toDouble(), latency), true, 50)
                 val avg = latencies.average()
                 statsView.text = String.format(
-                    "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms",
-                    latencies.size, avg, min, max
+                    "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d",
+                    latencies.size, avg, min, max, lost, outOfOrder
                 )
             }
+            x++
         }
 
         socket.close()
         val avg = latencies.average()
         return String.format(
-            "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms",
-            avg, min, max
+            "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d",
+            avg, min, max, lost, outOfOrder
         )
     }
 }

@@ -43,8 +43,9 @@ struct SyncResponse {
 };
 
 static uint64_t now_ns() {
+    // Use steady_clock to avoid wall-clock jumps
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 static std::vector<std::string> get_ip_addresses() {

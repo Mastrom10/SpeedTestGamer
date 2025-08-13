@@ -86,4 +86,11 @@
         android:layout_height="wrap_content"
         android:text="@string/stats_placeholder" />
 
+    <TextView
+        android:id="@+id/textClockOffset"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Offset: - ms"
+        android:layout_marginTop="8dp" />
+
 </LinearLayout>

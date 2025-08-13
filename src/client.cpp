@@ -14,7 +14,7 @@
 #include <ctime>
 #include <limits>
 
-using Clock = std::chrono::high_resolution_clock;
+using Clock = std::chrono::steady_clock;
 
 // Packet header layout used by the server. Pack it so the size is 20 bytes
 // and consistent with the Android implementation.
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
         uint64_t rtt = (t3 - t0) - (sresp.send_time_ns - sresp.recv_time_ns);
         int64_t off = ((int64_t)sresp.recv_time_ns - (int64_t)t0 +
                        (int64_t)sresp.send_time_ns - (int64_t)t3) / 2;
-        if (rtt < best_rtt) {
+        if ((int64_t)rtt >= 0 && rtt < best_rtt) {
             best_rtt = rtt;
             offset_ns = off;
         }
@@ -213,7 +213,7 @@ int main(int argc, char* argv[]) {
             uint64_t rtt = (recv_time - sync_t0) - (resp.send_time_ns - resp.recv_time_ns);
             int64_t off = ((int64_t)resp.recv_time_ns - (int64_t)sync_t0 +
                            (int64_t)resp.send_time_ns - (int64_t)recv_time) / 2;
-            if (rtt < best_rtt) {
+            if ((int64_t)rtt >= 0 && rtt < best_rtt) {
                 best_rtt = rtt;
                 offset_ns = off;
                 log << "SYNC update offset_ns=" << offset_ns

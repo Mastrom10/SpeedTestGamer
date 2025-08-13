@@ -7,6 +7,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import android.graphics.Color
+import android.os.SystemClock
 import com.jjoe64.graphview.GraphView
 import com.jjoe64.graphview.ValueDependentColor
 import com.jjoe64.graphview.series.DataPoint
@@ -27,6 +28,8 @@ class MainActivity : AppCompatActivity() {
 
     private val INIT_SYNC_COUNT = 10
     private val SYNC_INTERVAL_MS = 5000L
+    private val MAX_ACCEPTABLE_RTT_NS = 1_000_000_000L // 1s
+    private val MAX_OFFSET_JUMP_NS = 100_000_000L // 100ms
 
     private lateinit var editIp: EditText
     private lateinit var editPort: EditText
@@ -35,9 +38,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editTick: EditText
     private lateinit var editPayload: EditText
     private lateinit var statsView: TextView
+    private lateinit var clockView: TextView
     private lateinit var graph: GraphView
     private val series = BarGraphSeries<DataPoint>()
     private var testJob: kotlinx.coroutines.Job? = null
+    private var initialOffsetNs: Long? = null
+    private var lastRttNs: Long = Long.MAX_VALUE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,6 +56,7 @@ class MainActivity : AppCompatActivity() {
         editTick = findViewById(R.id.editTick)
         editPayload = findViewById(R.id.editPayload)
         statsView = findViewById(R.id.textStats)
+        clockView = findViewById(R.id.textClockOffset)
         graph = findViewById(R.id.graph)
         graph.addSeries(series)
         series.spacing = 50
@@ -115,35 +122,53 @@ class MainActivity : AppCompatActivity() {
         var offset: Long = 0
         var bestRtt = Long.MAX_VALUE
         try {
+            val initSamples = mutableListOf<Pair<Long, Long>>() // Pair(rtt, offset)
             for (i in 0 until INIT_SYNC_COUNT) {
                 if (!currentCoroutineContext().isActive) {
                     socket.close()
                     return "Cancelled"
                 }
-                val t0 = System.currentTimeMillis() * 1_000_000L
+                val t0 = SystemClock.elapsedRealtimeNanos()
                 ByteBuffer.wrap(reqBuf).order(ByteOrder.LITTLE_ENDIAN).putLong(0, t0)
                 socket.send(DatagramPacket(reqBuf, reqBuf.size, server, port))
                 socket.receive(respPacket)
-                val t3 = System.currentTimeMillis() * 1_000_000L
+                val t3 = SystemClock.elapsedRealtimeNanos()
                 val bb = ByteBuffer.wrap(respBuf).order(ByteOrder.LITTLE_ENDIAN)
                 val t1 = bb.long
                 val t2 = bb.long
                 val rtt = (t3 - t0) - (t2 - t1)
                 val off = ((t1 - t0) + (t2 - t3)) / 2
-                if (rtt < bestRtt) {
-                    bestRtt = rtt
-                    offset = off
+                if (rtt >= 0 && rtt <= MAX_ACCEPTABLE_RTT_NS) {
+                    initSamples.add(rtt to off)
                 }
             }
+            if (initSamples.isEmpty()) throw RuntimeException("No valid sync samples")
+            // Pick median of offsets from the 3 best RTT samples (or fewer if not enough)
+            val topK = initSamples.sortedBy { it.first }.take(3).map { it.second }.sorted()
+            val median = topK[topK.size / 2]
+            offset = median
+            bestRtt = initSamples.minOf { it.first }
         } catch (e: Exception) {
             socket.close()
             return "Failed to sync: ${e.message}"
         }
 
+        withContext(Dispatchers.Main) {
+            initialOffsetNs = offset
+            lastRttNs = bestRtt
+            clockView.text = String.format(
+                "Offset: %.2f ms | Drift: %.2f ms | RTT: %.2f/%.2f ms",
+                offset / 1_000_000.0,
+                0.0,
+                bestRtt / 1_000_000.0,
+                bestRtt / 1_000_000.0
+            )
+        }
+
         // build request
         val bufReq = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
         bufReq.putInt(count)
-        bufReq.putLong(System.currentTimeMillis() * 1_000_000L)
+        bufReq.putLong(SystemClock.elapsedRealtimeNanos())
         bufReq.putInt(0)
         bufReq.putInt(payloadSize)
         bufReq.putInt(tickMs)
@@ -159,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         var x = 0
         val packetBuf = ByteArray(1500)
         var received = 0
-        var nextSync = System.currentTimeMillis() * 1_000_000L + SYNC_INTERVAL_MS * 1_000_000L
+        var nextSync = SystemClock.elapsedRealtimeNanos() + SYNC_INTERVAL_MS * 1_000_000L
         var waitingSync = false
         var syncT0 = 0L
         val syncReq = ByteArray(8)
@@ -172,7 +197,7 @@ class MainActivity : AppCompatActivity() {
                 return "Cancelled"
             }
 
-            val now = System.currentTimeMillis() * 1_000_000L
+            val now = SystemClock.elapsedRealtimeNanos()
             if (!waitingSync && now >= nextSync) {
                 syncT0 = now
                 ByteBuffer.wrap(syncReq).order(ByteOrder.LITTLE_ENDIAN).putLong(0, syncT0)
@@ -188,16 +213,38 @@ class MainActivity : AppCompatActivity() {
                 socket.close()
                 return "Failed to receive packet: ${e.message}"
             }
-            val recvTime = System.currentTimeMillis() * 1_000_000L
+            val recvTime = SystemClock.elapsedRealtimeNanos()
             if (waitingSync && pkt.length == 16) {
-                ByteBuffer.wrap(syncRespBuf, 0, 16).order(ByteOrder.LITTLE_ENDIAN).apply {
+                ByteBuffer.wrap(pkt.data, 0, 16).order(ByteOrder.LITTLE_ENDIAN).apply {
                     val t1 = long
                     val t2 = long
                     val rtt = (recvTime - syncT0) - (t2 - t1)
                     val off = ((t1 - syncT0) + (t2 - recvTime)) / 2
-                    if (rtt < bestRtt) {
-                        bestRtt = rtt
-                        offset = off
+
+                    // Robust update policy
+                    if (rtt >= 0 && rtt <= MAX_ACCEPTABLE_RTT_NS) {
+                        val previousOffset = offset
+                        // Accept if improves best RTT notably or if change is small
+                        val improvesBest = rtt < bestRtt
+                        val smallJump = kotlin.math.abs(off - previousOffset) <= MAX_OFFSET_JUMP_NS
+                        val blended = if (smallJump) {
+                            // Exponential smoothing to reduce jitter
+                            (previousOffset * 4 + off) / 5
+                        } else off
+
+                        if (improvesBest) bestRtt = rtt
+                        lastRttNs = rtt
+                        offset = blended
+                        withContext(Dispatchers.Main) {
+                            val drift = initialOffsetNs?.let { (offset - it) / 1_000_000.0 } ?: 0.0
+                            clockView.text = String.format(
+                                "Offset: %.2f ms | Drift: %.2f ms | RTT: %.2f/%.2f ms",
+                                offset / 1_000_000.0,
+                                drift,
+                                lastRttNs / 1_000_000.0,
+                                bestRtt / 1_000_000.0
+                            )
+                        }
                     }
                 }
                 waitingSync = false
@@ -232,6 +279,7 @@ class MainActivity : AppCompatActivity() {
             expectedSeq = seq + 1
 
             var latency = (recvTime - (ts - offset)) / 1e6
+            if (latency < 0) latency = 0.0
             if (latency > 100) {
                 latency = 100.0
                 lost++

@@ -131,6 +131,7 @@ int main(int argc, char* argv[]) {
     };
     #pragma pack(pop)
 
+    std::cout << "Server ready. Waiting for requests..." << std::endl;
     while (true) {
         char buffer[1500];
         sockaddr_in client{};
@@ -145,13 +146,31 @@ int main(int argc, char* argv[]) {
             SyncRequest sreq;
             std::memcpy(&sreq, buffer, sizeof(sreq));
             SyncResponse resp;
-            resp.recv_time_ns = now_ns();
-            resp.send_time_ns = now_ns();
+            // Capturar t1 y t2 con una sola lectura consistente del reloj
+            uint64_t t1 = now_ns();
+            uint64_t t2 = now_ns();
+            if (t2 < t1) t2 = t1; // monotonicidad defensiva
+            resp.recv_time_ns = t1;
+            resp.send_time_ns = t2;
             sendto(sock, &resp, sizeof(resp), 0, (sockaddr*)&client, len);
             continue;
         }
 
         if (n < (ssize_t)sizeof(Request)) {
+            // RTT echo mode: echo back payload with timestamps if size matches PacketHeader
+            if (n >= (ssize_t)sizeof(SyncRequest)) {
+                // handled above
+            }
+            // If the client sends a PacketHeader with special server_id=0xEEEEEEEE, echo it back
+            if (n >= (ssize_t)sizeof(PacketHeader)) {
+                PacketHeader hdrIn{};
+                std::memcpy(&hdrIn, buffer, sizeof(hdrIn));
+                if (hdrIn.server_id == 0xEEEEEEEE) {
+                    // Echo exacto: devolvemos lo mismo para medir RTT puro en el cliente
+                    sendto(sock, &hdrIn, sizeof(hdrIn), 0, (sockaddr*)&client, len);
+                    continue;
+                }
+            }
             continue; // ignore unknown packet
         }
 
@@ -178,10 +197,17 @@ int main(int argc, char* argv[]) {
                 hdr.server_id = server_id;
                 hdr.tick_ms = actual_tick;
                 std::memcpy(buf.data(), &hdr, sizeof(hdr));
+                // Rellenar payload con patrón determinístico para verificación de integridad
+                if (req.payload_size > 0) {
+                    uint8_t pattern = static_cast<uint8_t>(i & 0xFF);
+                    std::fill(buf.begin() + sizeof(PacketHeader), buf.end(), pattern);
+                }
                 sendto(sock, buf.data(), buf.size(), 0, (sockaddr*)&client_copy, len_copy);
                 if (actual_tick > 0 && i + 1 < count)
                     std::this_thread::sleep_for(std::chrono::milliseconds(actual_tick));
             }
+            std::cout << "Completed stream to client with count=" << count
+                      << " tick=" << actual_tick << "ms payload=" << req.payload_size << std::endl;
         }).detach();
     }
 }

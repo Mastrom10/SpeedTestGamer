@@ -5,92 +5,267 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <TextView
+    <LinearLayout
+        android:id="@+id/configContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Server IP" />
+        android:orientation="vertical"
+        android:layout_marginBottom="8dp">
 
-    <EditText
-        android:id="@+id/editIp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="192.168.1.1"
-        android:layout_marginBottom="8dp" />
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Server IP" />
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Port" />
+        <EditText
+            android:id="@+id/editIp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="192.168.1.1"
+            android:layout_marginBottom="8dp" />
 
-    <EditText
-        android:id="@+id/editPort"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:inputType="number"
-        android:hint="9000"
-        android:layout_marginBottom="8dp" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2"
+            android:layout_marginBottom="8dp">
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Packet Count" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingEnd="8dp">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Port" />
+            <EditText
+                android:id="@+id/editPort"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:hint="9000" />
+        </LinearLayout>
 
-    <EditText
-        android:id="@+id/editCount"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:inputType="number"
-        android:layout_marginBottom="8dp" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingStart="8dp">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Packet Count" />
+            <EditText
+                android:id="@+id/editCount"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number" />
+        </LinearLayout>
+        </LinearLayout>
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Tick (ms)" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2"
+            android:layout_marginBottom="8dp">
 
-    <EditText
-        android:id="@+id/editTick"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:inputType="number"
-        android:layout_marginBottom="8dp" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingEnd="8dp">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Tick (ms)" />
+            <EditText
+                android:id="@+id/editTick"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number" />
+        </LinearLayout>
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Payload (bytes)" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingStart="8dp">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Payload (bytes)" />
+            <EditText
+                android:id="@+id/editPayload"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number" />
+        </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
 
-    <EditText
-        android:id="@+id/editPayload"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:inputType="number"
-        android:layout_marginBottom="8dp" />
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/buttonStart"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Play" />
+
+        <Space
+            android:layout_width="8dp"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/buttonClear"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Borrar datos" />
+    </LinearLayout>
 
     <Button
-        android:id="@+id/buttonStart"
-        android:layout_width="wrap_content"
+        android:id="@+id/buttonConfig"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Start"
+        android:text="Configurar"
         android:layout_marginBottom="8dp" />
 
-    <com.jjoe64.graphview.GraphView
+    <ar.com.telecom.speedtestgamer.StackedBarChartView
         android:id="@+id/graph"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:layout_marginBottom="8dp" />
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
+
+        <CheckBox
+            android:id="@+id/checkResidual"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Mostrar residual (lat - baseRTT)" />
+
+        <CheckBox
+            android:id="@+id/checkAutoScale"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Auto escala Y" />
+    </LinearLayout>
+
+    
+
+    <CheckBox
+        android:id="@+id/checkFullRtt"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Modo RTT completo (eco)" />
+
+    <ar.com.telecom.speedtestgamer.JitterStripView
+        android:id="@+id/jitterUp"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:layout_marginBottom="4dp" />
+
+    <ar.com.telecom.speedtestgamer.JitterStripView
+        android:id="@+id/jitterDown"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:layout_marginBottom="8dp" />
+
     <TextView
         android:id="@+id/textStats"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/stats_placeholder" />
+        android:text="@string/stats_placeholder"
+        android:lineSpacingExtra="2dp"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
 
     <TextView
         android:id="@+id/textClockOffset"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Offset: - ms"
-        android:layout_marginTop="8dp" />
+        android:text="Drift: - ms | RTT: -/- ms"
+        android:layout_marginTop="4dp"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/textRx"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="RX: 0 B | Rate: 0 B/s"
+        android:textSize="14sp"
+        android:layout_marginTop="4dp" />
+
+    <TextView
+        android:id="@+id/textQuality"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Quality: -"
+        android:textSize="14sp"
+        android:layout_marginTop="4dp" />
+
+    <LinearLayout
+        android:id="@+id/hudRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp"
+        android:weightSum="4">
+        <TextView
+            android:id="@+id/hudPing"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Ping: -"
+            android:textSize="14sp" />
+        <TextView
+            android:id="@+id/hudMiss"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Miss: -"
+            android:textSize="14sp" />
+        <TextView
+            android:id="@+id/hudLoss"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Loss: -"
+            android:textSize="14sp" />
+        <TextView
+            android:id="@+id/hudJitter"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Jitter: -"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/textVersion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Version: "
+        android:layout_marginTop="8dp"
+        android:textAlignment="viewEnd" />
 
 </LinearLayout>

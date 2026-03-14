@@ -8,12 +8,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import android.graphics.Color
 import android.os.SystemClock
-import com.jjoe64.graphview.GraphView
-import com.jjoe64.graphview.ValueDependentColor
-import com.jjoe64.graphview.series.DataPoint
-import com.jjoe64.graphview.series.BarGraphSeries
+import java.net.SocketTimeoutException
+// GraphView eliminado del gráfico principal. Solo mantenemos tipos básicos si hiciera falta.
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -30,20 +29,40 @@ class MainActivity : AppCompatActivity() {
     private val SYNC_INTERVAL_MS = 5000L
     private val MAX_ACCEPTABLE_RTT_NS = 1_000_000_000L // 1s
     private val MAX_OFFSET_JUMP_NS = 100_000_000L // 100ms
+    private val INITIAL_MAX_Y_MS = 200.0 // rango fijo del gráfico
+    private val LOST_BAR_MS = INITIAL_MAX_Y_MS // barra para timeouts/gaps
 
     private lateinit var editIp: EditText
     private lateinit var editPort: EditText
     private lateinit var startButton: Button
+    private lateinit var clearButton: Button
+    private lateinit var configButton: Button
     private lateinit var editCount: EditText
     private lateinit var editTick: EditText
     private lateinit var editPayload: EditText
     private lateinit var statsView: TextView
     private lateinit var clockView: TextView
-    private lateinit var graph: GraphView
-    private val series = BarGraphSeries<DataPoint>()
+    private lateinit var rxView: TextView
+    private lateinit var qualityView: TextView
+    private lateinit var versionView: TextView
+    private lateinit var graph: StackedBarChartView
+    // graphQueue eliminado
+    private lateinit var jitterUp: JitterStripView
+    private lateinit var jitterDown: JitterStripView
+    private lateinit var hudPing: TextView
+    private lateinit var hudMiss: TextView
+    private lateinit var hudLoss: TextView
+    private lateinit var hudJitter: TextView
+    // eliminado progressQueue
+    // Series antiguas (GraphView) eliminadas
+    private lateinit var checkResidual: android.widget.CheckBox
+    private lateinit var checkAutoScale: android.widget.CheckBox
+    private lateinit var checkFullRtt: android.widget.CheckBox
+
     private var testJob: kotlinx.coroutines.Job? = null
     private var initialOffsetNs: Long? = null
     private var lastRttNs: Long = Long.MAX_VALUE
+    private var graphMaxYMs: Double = INITIAL_MAX_Y_MS
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,45 +71,78 @@ class MainActivity : AppCompatActivity() {
         editIp = findViewById(R.id.editIp)
         editPort = findViewById(R.id.editPort)
         startButton = findViewById(R.id.buttonStart)
+        clearButton = findViewById(R.id.buttonClear)
+        configButton = findViewById(R.id.buttonConfig)
         editCount = findViewById(R.id.editCount)
         editTick = findViewById(R.id.editTick)
         editPayload = findViewById(R.id.editPayload)
         statsView = findViewById(R.id.textStats)
         clockView = findViewById(R.id.textClockOffset)
+        rxView = findViewById(R.id.textRx)
+        versionView = findViewById(R.id.textVersion)
+        qualityView = findViewById(R.id.textQuality)
         graph = findViewById(R.id.graph)
-        graph.addSeries(series)
-        series.spacing = 50
-        // enable scrolling of the graph when new data arrives
-        graph.viewport.isXAxisBoundsManual = true
-        graph.viewport.setMinX(0.0)
-        graph.viewport.setMaxX(50.0)
-        graph.viewport.isYAxisBoundsManual = true
-        graph.viewport.setMinY(0.0)
-        graph.viewport.setMaxY(100.0)
-        series.valueDependentColor = ValueDependentColor { point ->
-            when {
-                point.y < 40 -> Color.GREEN
-                point.y < 70 -> Color.YELLOW
-                point.y >= 100 -> Color.rgb(139, 0, 0)
-                else -> Color.RED
-            }
-        }
+        // graphQueue ya no existe en el layout; removido
+        jitterUp = findViewById(R.id.jitterUp)
+        jitterDown = findViewById(R.id.jitterDown)
+        hudPing = findViewById(R.id.hudPing)
+        hudMiss = findViewById(R.id.hudMiss)
+        hudLoss = findViewById(R.id.hudLoss)
+        hudJitter = findViewById(R.id.hudJitter)
+        // sin progressQueue
+        checkResidual = findViewById(R.id.checkResidual)
+        checkAutoScale = findViewById(R.id.checkAutoScale)
+        checkFullRtt = findViewById(R.id.checkFullRtt)
+        // configurar chart custom
+        graph.setCapacity(50)
+        graph.setAutoScale(checkAutoScale.isChecked)
+        graph.setFixedMaxY(INITIAL_MAX_Y_MS)
+        // series antiguas eliminadas
 
 
 
         loadPrefs()
+        versionView.text = "Version: 1.1.0"
 
         startButton.setOnClickListener {
-            if (testJob?.isActive == true) {
-                testJob?.cancel()
-            } else {
+            lifecycleScope.launch {
+                // Asegurar cancelación completa para evitar overlap de series/x
+                testJob?.cancelAndJoin()
+                if (startButton.text.toString() == "Stop") {
+                    startButton.text = "Start"
+                    return@launch
+                }
                 startTest()
             }
+        }
+
+        clearButton.setOnClickListener {
+            lifecycleScope.launch {
+                // Limpia solo datos de medición y estado transitorio, preserva config
+                testJob?.cancelAndJoin()
+                // Reset gráfico custom
+                graph.reset()
+                graph.setThreshold(null)
+                statsView.text = getString(R.string.stats_placeholder)
+                clockView.text = "Offset: - ms"
+                initialOffsetNs = null
+                lastRttNs = Long.MAX_VALUE
+                // sin graphQueue
+                startButton.text = "Play"
+                // Reset de contadores de transferencia
+                rxView.text = "RX: 0 B | Rate: 0 B/s"
+            }
+        }
+
+        configButton.setOnClickListener {
+            val container = findViewById<android.view.View>(R.id.configContainer)
+            container.visibility = if (container.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
         }
     }
 
     private fun startTest() {
-        series.resetData(arrayOf())
+        graph.reset()
+        var x = 0
         statsView.text = "Running..."
         val ip = editIp.text.toString()
         val port = editPort.text.toString().toIntOrNull() ?: return
@@ -100,6 +152,7 @@ class MainActivity : AppCompatActivity() {
 
         savePrefs(ip, port, count, tickMs, payloadSize)
 
+        graph.setThreshold(tickMs.toDouble())
         startButton.text = "Stop"
         testJob = lifecycleScope.launch(Dispatchers.IO) {
             val result = runTest(ip, port, count, tickMs, payloadSize)
@@ -112,200 +165,161 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun runTest(ip: String, port: Int, count: Int, tickMs: Int, payloadSize: Int): String {
         val socket = DatagramSocket()
-        socket.soTimeout = 1000
         val server = InetAddress.getByName(ip)
-
-        // initial synchronization
-        val reqBuf = ByteArray(8)
-        val respBuf = ByteArray(16)
-        val respPacket = DatagramPacket(respBuf, respBuf.size)
-        var offset: Long = 0
-        var bestRtt = Long.MAX_VALUE
-        try {
-            val initSamples = mutableListOf<Pair<Long, Long>>() // Pair(rtt, offset)
-            for (i in 0 until INIT_SYNC_COUNT) {
-                if (!currentCoroutineContext().isActive) {
-                    socket.close()
-                    return "Cancelled"
-                }
-                val t0 = SystemClock.elapsedRealtimeNanos()
-                ByteBuffer.wrap(reqBuf).order(ByteOrder.LITTLE_ENDIAN).putLong(0, t0)
-                socket.send(DatagramPacket(reqBuf, reqBuf.size, server, port))
-                socket.receive(respPacket)
-                val t3 = SystemClock.elapsedRealtimeNanos()
-                val bb = ByteBuffer.wrap(respBuf).order(ByteOrder.LITTLE_ENDIAN)
-                val t1 = bb.long
-                val t2 = bb.long
-                val rtt = (t3 - t0) - (t2 - t1)
-                val off = ((t1 - t0) + (t2 - t3)) / 2
-                if (rtt >= 0 && rtt <= MAX_ACCEPTABLE_RTT_NS) {
-                    initSamples.add(rtt to off)
-                }
-            }
-            if (initSamples.isEmpty()) throw RuntimeException("No valid sync samples")
-            // Pick median of offsets from the 3 best RTT samples (or fewer if not enough)
-            val topK = initSamples.sortedBy { it.first }.take(3).map { it.second }.sorted()
-            val median = topK[topK.size / 2]
-            offset = median
-            bestRtt = initSamples.minOf { it.first }
-        } catch (e: Exception) {
-            socket.close()
-            return "Failed to sync: ${e.message}"
-        }
-
-        withContext(Dispatchers.Main) {
-            initialOffsetNs = offset
-            lastRttNs = bestRtt
-            clockView.text = String.format(
-                "Offset: %.2f ms | Drift: %.2f ms | RTT: %.2f/%.2f ms",
-                offset / 1_000_000.0,
-                0.0,
-                bestRtt / 1_000_000.0,
-                bestRtt / 1_000_000.0
-            )
-        }
-
-        // build request
-        val bufReq = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
-        bufReq.putInt(count)
-        bufReq.putLong(SystemClock.elapsedRealtimeNanos())
-        bufReq.putInt(0)
-        bufReq.putInt(payloadSize)
-        bufReq.putInt(tickMs)
-        val reqData = bufReq.array()
-        socket.send(DatagramPacket(reqData, reqData.size, server, port))
+        // timeout por tick: permite clasificar misses sin frenar el ritmo
+        socket.soTimeout = (tickMs * 2).coerceAtLeast(50)
 
         val latencies = mutableListOf<Double>()
         var min = Double.MAX_VALUE
         var max = 0.0
-        var lost = 0
-        var outOfOrder = 0
-        var expectedSeq = 0
-        var x = 0
-        val packetBuf = ByteArray(1500)
-        var received = 0
-        var nextSync = SystemClock.elapsedRealtimeNanos() + SYNC_INTERVAL_MS * 1_000_000L
-        var waitingSync = false
-        var syncT0 = 0L
-        val syncReq = ByteArray(8)
-        val syncRespBuf = ByteArray(16)
-        val syncRespPacket = DatagramPacket(syncRespBuf, syncRespBuf.size)
+        var misses = 0
+        var lates = 0
+        var onTime = 0
+        var totalBytes: Long = 0
+        var lastRateBytes: Long = 0
+        var lastRateTs = SystemClock.elapsedRealtimeNanos()
 
-        while (received < count) {
+        val tickNs = tickMs * 1_000_000L
+        val startNs = SystemClock.elapsedRealtimeNanos() + 5_000_000L // 5ms para armar el primer envío
+
+        for (seq in 0 until count) {
             if (!currentCoroutineContext().isActive) {
                 socket.close()
                 return "Cancelled"
             }
 
-            val now = SystemClock.elapsedRealtimeNanos()
-            if (!waitingSync && now >= nextSync) {
-                syncT0 = now
-                ByteBuffer.wrap(syncReq).order(ByteOrder.LITTLE_ENDIAN).putLong(0, syncT0)
-                socket.send(DatagramPacket(syncReq, syncReq.size, server, port))
-                waitingSync = true
-                nextSync = now + SYNC_INTERVAL_MS * 1_000_000L
+            val scheduledSend = startNs + seq * tickNs
+            var now = SystemClock.elapsedRealtimeNanos()
+            val waitNs = scheduledSend - now
+            if (waitNs > 0) {
+                // sleep grueso y pequeño spin para mayor precisión sin busy-wait largo
+                val sleepMs = (waitNs / 1_000_000L).coerceAtLeast(0L)
+                if (sleepMs > 0) Thread.sleep(sleepMs)
+                while (SystemClock.elapsedRealtimeNanos() < scheduledSend) { /* spin corto */ }
             }
 
-            val pkt = DatagramPacket(packetBuf, packetBuf.size)
+                    val sendTs = SystemClock.elapsedRealtimeNanos()
+                    val hdr = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN)
+            hdr.putInt(seq)
+                    hdr.putLong(sendTs)
+                    hdr.putInt(0xEEEEEEEE.toInt())
+                    hdr.putInt(tickMs)
+            val out = hdr.array()
+            socket.send(DatagramPacket(out, out.size, server, port))
+
+            val inBuf = ByteArray(64)
+            val inPkt = DatagramPacket(inBuf, inBuf.size)
+            var gotReply = false
             try {
-                socket.receive(pkt)
-            } catch (e: Exception) {
-                socket.close()
-                return "Failed to receive packet: ${e.message}"
-            }
-            val recvTime = SystemClock.elapsedRealtimeNanos()
-            if (waitingSync && pkt.length == 16) {
-                ByteBuffer.wrap(pkt.data, 0, 16).order(ByteOrder.LITTLE_ENDIAN).apply {
-                    val t1 = long
-                    val t2 = long
-                    val rtt = (recvTime - syncT0) - (t2 - t1)
-                    val off = ((t1 - syncT0) + (t2 - recvTime)) / 2
+                socket.receive(inPkt)
+                val recvNs = SystemClock.elapsedRealtimeNanos()
+                totalBytes += inPkt.length
 
-                    // Robust update policy
-                    if (rtt >= 0 && rtt <= MAX_ACCEPTABLE_RTT_NS) {
-                        val previousOffset = offset
-                        // Accept if improves best RTT notably or if change is small
-                        val improvesBest = rtt < bestRtt
-                        val smallJump = kotlin.math.abs(off - previousOffset) <= MAX_OFFSET_JUMP_NS
-                        val blended = if (smallJump) {
-                            // Exponential smoothing to reduce jitter
-                            (previousOffset * 4 + off) / 5
-                        } else off
+                val bb = ByteBuffer.wrap(inPkt.data, 0, inPkt.length).order(ByteOrder.LITTLE_ENDIAN)
+                if (inPkt.length >= 20) {
+                    val rSeq = bb.int
+                    val rTs = bb.long
+                    val rSid = bb.int
+                    /* val rTick = */ bb.int
+                    if (rSid == 0xEEEEEEEE.toInt() && rSeq == seq && rTs == sendTs) {
+                        val rttMs = (recvNs - sendTs) / 1e6
+                        latencies.add(rttMs)
+                        if (rttMs < min) min = rttMs
+                        if (rttMs > max) max = rttMs
+                        if (rttMs <= tickMs) onTime++ else lates++
 
-                        if (improvesBest) bestRtt = rtt
-                        lastRttNs = rtt
-                        offset = blended
+                        // gráfico: base = min(rtt, tick) (verde), residual = max(0, rtt - tick) (rojo)
+                        val base = kotlin.math.min(rttMs, tickMs.toDouble())
+                        val total = rttMs
                         withContext(Dispatchers.Main) {
-                            val drift = initialOffsetNs?.let { (offset - it) / 1_000_000.0 } ?: 0.0
-                            clockView.text = String.format(
-                                "Offset: %.2f ms | Drift: %.2f ms | RTT: %.2f/%.2f ms",
-                                offset / 1_000_000.0,
-                                drift,
-                                lastRttNs / 1_000_000.0,
-                                bestRtt / 1_000_000.0
-                            )
+                            val p95 = percentile(latencies, 95.0)
+                            // escalar sugerido entre tick y p95
+                            val hint = kotlin.math.max(tickMs * 1.0, p95 * 1.2)
+                            graph.setAutoScale(checkAutoScale.isChecked)
+                            if (!checkAutoScale.isChecked) graph.setFixedMaxY(INITIAL_MAX_Y_MS)
+                            graph.append(base, total, hint)
+                            val rateWindowSec = (recvNs - lastRateTs) / 1_000_000_000.0
+                            if (rateWindowSec >= 1.0) {
+                                val bytesInWindow = totalBytes - lastRateBytes
+                                lastRateBytes = totalBytes
+                                lastRateTs = recvNs
+                                rxView.text = String.format("RX: %s | Rate: %s/s", formatBytes(totalBytes), formatBytes((bytesInWindow / rateWindowSec).toLong()))
+                            }
+                            val onPct = onTime * 100.0 / (seq + 1)
+                            val latePct = lates * 100.0 / (seq + 1)
+                            val missPct = misses * 100.0 / (seq + 1)
+                            statsView.text = String.format("Ticks: %d On-time: %.1f%% Late: %.1f%% Miss: %.1f%% Avg: %.1f ms", seq + 1, onPct, latePct, missPct, latencies.average())
+                            hudPing.text = String.format("Tick: %d ms", tickMs)
+                            hudMiss.text = String.format("On: %.1f%%", onPct)
+                            hudLoss.text = String.format("Late: %.1f%%", latePct)
+                            hudJitter.text = String.format("Miss: %.1f%%", missPct)
                         }
+                        gotReply = true
                     }
                 }
-                waitingSync = false
-                continue
+            } catch (e: SocketTimeoutException) {
+                // sin respuesta en la ventana del timeout
             }
-            if (pkt.length < 20) {
-                continue
-            }
-            val hdr = ByteBuffer.wrap(pkt.data, 0, 20).order(ByteOrder.LITTLE_ENDIAN)
-            val seq = hdr.int
-            val ts = hdr.long
-            hdr.int // server_id
-            hdr.int // tick
-            if (seq > expectedSeq) {
-                for (m in expectedSeq until seq) {
-                    lost++
-                    latencies.add(100.0)
-                    if (100.0 > max) max = 100.0
-                    withContext(Dispatchers.Main) {
-                        series.appendData(DataPoint(x.toDouble(), 100.0), true, 50)
-                        val avg = latencies.average()
-                        statsView.text = String.format(
-                            "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
-                            latencies.size, avg, min, max, lost, outOfOrder, offset / 1_000_000.0
-                        )
-                    }
-                    x++
-                }
-            } else if (seq < expectedSeq) {
-                outOfOrder++
-            }
-            expectedSeq = seq + 1
 
-            var latency = (recvTime - (ts - offset)) / 1e6
-            if (latency < 0) latency = 0.0
-            if (latency > 100) {
-                latency = 100.0
-                lost++
-            }
-            latencies.add(latency)
-            if (latency < min) min = latency
-            if (latency > max) max = latency
-
+            if (!gotReply) {
+                misses++
             withContext(Dispatchers.Main) {
-                series.appendData(DataPoint(x.toDouble(), latency), true, 50)
-                val avg = latencies.average()
-                statsView.text = String.format(
-                    "Packets: %d Avg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
-                    latencies.size, avg, min, max, lost, outOfOrder, offset / 1_000_000.0
-                )
+                    val hint = tickMs * 1.2
+                    graph.setAutoScale(checkAutoScale.isChecked)
+                    if (!checkAutoScale.isChecked) graph.setFixedMaxY(INITIAL_MAX_Y_MS)
+                    // barra roja hasta el umbral del tick para indicar miss
+                    graph.append(0.0, tickMs.toDouble(), hint)
+                    val onPct = onTime * 100.0 / (seq + 1)
+                    val latePct = lates * 100.0 / (seq + 1)
+                    val missPct = misses * 100.0 / (seq + 1)
+                    statsView.text = String.format("Ticks: %d On-time: %.1f%% Late: %.1f%% Miss: %.1f%% Avg: %.1f ms", seq + 1, onPct, latePct, missPct, latencies.average())
+                    hudPing.text = String.format("Tick: %d ms", tickMs)
+                    hudMiss.text = String.format("On: %.1f%%", onPct)
+                    hudLoss.text = String.format("Late: %.1f%%", latePct)
+                    hudJitter.text = String.format("Miss: %.1f%%", missPct)
+                }
             }
-            x++
-            received++
         }
 
         socket.close()
-        val avg = latencies.average()
         return String.format(
-            "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms Lost: %d OoO: %d Off: %.2f ms",
-            avg, min, max, lost, outOfOrder, offset / 1_000_000.0
+            "Finished\nAvg: %.2f ms Min: %.2f ms Max: %.2f ms On-time: %d Late: %d Miss: %d",
+            latencies.average(), min, max, onTime, lates, misses
         )
+    }
+
+    // escala fija a 200ms
+
+    private fun formatBytes(bytes: Long): String {
+        val abs = kotlin.math.abs(bytes.toDouble())
+        return when {
+            abs >= 1e9 -> String.format("%.2f GB", bytes / 1e9)
+            abs >= 1e6 -> String.format("%.2f MB", bytes / 1e6)
+            abs >= 1e3 -> String.format("%.2f KB", bytes / 1e3)
+            else -> String.format("%d B", bytes)
+        }
+    }
+
+    private fun percentile(data: List<Double>, p: Double): Double {
+        if (data.isEmpty()) return 0.0
+        val sorted = data.sorted()
+        val rank = (p / 100.0) * (sorted.size - 1)
+        val low = kotlin.math.floor(rank).toInt()
+        val high = kotlin.math.ceil(rank).toInt()
+        return if (low == high) sorted[low] else {
+            val w = rank - low
+            sorted[low] * (1 - w) + sorted[high] * w
+        }
+    }
+
+    private fun movingStd(data: List<Double>, window: Int = 50): Double {
+        if (data.isEmpty()) return 0.0
+        val start = if (data.size > window) data.size - window else 0
+        val slice = data.subList(start, data.size)
+        val mean = slice.average()
+        var acc = 0.0
+        for (v in slice) acc += (v - mean) * (v - mean)
+        return kotlin.math.sqrt(acc / slice.size)
     }
 
     private fun savePrefs(ip: String, port: Int, count: Int, tick: Int, payload: Int) {

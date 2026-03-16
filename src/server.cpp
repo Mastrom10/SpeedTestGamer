@@ -12,9 +12,11 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sstream>
 #include <string>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <thread>
@@ -22,6 +24,7 @@
 #include <unistd.h>
 #include <vector>
 #include <atomic>
+#include <linux/wireless.h>
 
 namespace {
 
@@ -269,6 +272,28 @@ bool interfaceIsUp(const std::string& iface) {
     return state == "up" || state == "unknown";
 }
 
+int detectWifiLinkMbps(const std::string& iface) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        return -1;
+    }
+
+    iwreq req {};
+    std::memset(&req, 0, sizeof(req));
+    std::snprintf(req.ifr_name, IFNAMSIZ, "%s", iface.c_str());
+
+    int mbps = -1;
+    if (ioctl(sock, SIOCGIWRATE, &req) == 0) {
+        const int64_t bitsPerSec = static_cast<int64_t>(req.u.bitrate.value);
+        if (bitsPerSec > 0) {
+            mbps = static_cast<int>((bitsPerSec + 500000LL) / 1000000LL);
+        }
+    }
+
+    close(sock);
+    return mbps;
+}
+
 ServerLinkType detectInterfaceType(const std::string& iface) {
     if (pathExists("/sys/class/net/" + iface + "/wireless")) {
         return ServerLinkType::WIFI;
@@ -343,7 +368,10 @@ ServerLinkSnapshot detectServerLinkSnapshot() {
         snapshot.iface = iface;
         snapshot.type = detectInterfaceType(iface);
 
-        const int speedMbps = readIntFile("/sys/class/net/" + iface + "/speed", -1);
+        int speedMbps = readIntFile("/sys/class/net/" + iface + "/speed", -1);
+        if (speedMbps <= 0 && snapshot.type == ServerLinkType::WIFI) {
+            speedMbps = detectWifiLinkMbps(iface);
+        }
         if (speedMbps > 0) {
             snapshot.downMbps = static_cast<uint32_t>(speedMbps);
             snapshot.upMbps = static_cast<uint32_t>(speedMbps);

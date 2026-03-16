@@ -95,11 +95,16 @@ Flujo:
 
 ### Telemetría de vínculo del servidor
 
-Al iniciar, el servidor intenta detectar interfaz activa y velocidad teórica (best-effort en Linux, usando `/sys/class/net`):
+Al iniciar, el servidor intenta detectar interfaz activa y velocidad teórica (best-effort en Linux):
+
+- Primera fuente: `/sys/class/net/<iface>/speed`.
+- Fallback Wi-Fi: `ioctl(SIOCGIWRATE)` cuando `speed` no está disponible o devuelve valor inválido.
 
 - `serverIface`
 - `serverLinkType` (`ethernet|wifi|cellular|other|unknown`)
 - `serverLinkDownMbps`
 - `serverLinkUpMbps`
 
-Estos valores se loguean en `server_start` y también se envían al cliente en `START_ACK` de throughput para visualización comparativa.
+Si no se puede inferir velocidad, se reporta `0` (desconocido).
+
+Estos valores se loguean en `server_start` y también se envían al cliente en `START_ACK` de throughput para visualización comparativa (cliente vs teórico del vínculo servidor/camino).

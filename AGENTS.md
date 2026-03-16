@@ -13,6 +13,9 @@
 - Mantener compatibilidad Linux en arquitecturas `x86_64` y `arm64`.
 - Evitar dependencias no estándar de C++.
 - Mantener protocolos de red documentados en `README.md` cuando cambien mensajes o versiones.
+- Mantener documentada la telemetría de vínculo del servidor:
+  - campos `serverIface/serverLinkType/serverLinkDownMbps/serverLinkUpMbps`,
+  - contrato de envío de metadata en `START_ACK` (throughput).
 
 ## Colaboracion con HomeScan2
 - `HomeScan2` consume este backend por red (UDP v2 y TCP throughput).

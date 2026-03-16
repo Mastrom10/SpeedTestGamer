@@ -1,10 +1,12 @@
 #include <arpa/inet.h>
 #include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <iomanip>
@@ -40,6 +42,14 @@ constexpr uint32_t TCP_MAX_CHUNK_BYTES = 64 * 1024;
 constexpr uint32_t TCP_MIN_DURATION_MS = 1000;
 constexpr uint32_t TCP_MAX_DURATION_MS = 60000;
 constexpr int SESSION_IDLE_TIMEOUT_MS = 30000;
+
+enum class ServerLinkType : uint8_t {
+    UNKNOWN = 0,
+    ETHERNET = 1,
+    WIFI = 2,
+    CELLULAR = 3,
+    OTHER = 4,
+};
 
 enum class UdpMessageType : uint16_t {
     SYNC_REQ = 1,
@@ -137,6 +147,13 @@ struct TrafficCounters {
     std::atomic<uint64_t> tcpBytesOut{0};
 };
 
+struct ServerLinkSnapshot {
+    std::string iface;
+    ServerLinkType type = ServerLinkType::UNKNOWN;
+    uint32_t downMbps = 0;
+    uint32_t upMbps = 0;
+};
+
 uint64_t nowNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
                SteadyClock::now().time_since_epoch())
@@ -187,6 +204,161 @@ std::string addrToString(const sockaddr_in& addr) {
     std::ostringstream oss;
     oss << ip << ":" << ntohs(addr.sin_port);
     return oss.str();
+}
+
+std::string trim(const std::string& input) {
+    size_t first = 0;
+    while (first < input.size() && std::isspace(static_cast<unsigned char>(input[first]))) {
+        ++first;
+    }
+    size_t last = input.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(input[last - 1]))) {
+        --last;
+    }
+    return input.substr(first, last - first);
+}
+
+std::string readFirstLine(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return "";
+    }
+    std::string line;
+    std::getline(in, line);
+    return trim(line);
+}
+
+int readIntFile(const std::string& path, int fallback = -1) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return fallback;
+    }
+    int value = fallback;
+    in >> value;
+    return in.fail() ? fallback : value;
+}
+
+bool pathExists(const std::string& path) {
+    return access(path.c_str(), F_OK) == 0;
+}
+
+std::vector<std::string> listInterfaces() {
+    std::vector<std::string> ifaces;
+    DIR* dir = opendir("/sys/class/net");
+    if (!dir) {
+        return ifaces;
+    }
+
+    while (true) {
+        dirent* entry = readdir(dir);
+        if (!entry) {
+            break;
+        }
+        std::string name = entry->d_name;
+        if (name == "." || name == ".." || name == "lo") {
+            continue;
+        }
+        ifaces.push_back(name);
+    }
+    closedir(dir);
+    return ifaces;
+}
+
+bool interfaceIsUp(const std::string& iface) {
+    const std::string state = readFirstLine("/sys/class/net/" + iface + "/operstate");
+    return state == "up" || state == "unknown";
+}
+
+ServerLinkType detectInterfaceType(const std::string& iface) {
+    if (pathExists("/sys/class/net/" + iface + "/wireless")) {
+        return ServerLinkType::WIFI;
+    }
+    const int rawType = readIntFile("/sys/class/net/" + iface + "/type", -1);
+    if (rawType == 1) {
+        return ServerLinkType::ETHERNET;
+    }
+    return ServerLinkType::OTHER;
+}
+
+std::string serverLinkTypeToString(ServerLinkType type) {
+    switch (type) {
+        case ServerLinkType::ETHERNET: return "ethernet";
+        case ServerLinkType::WIFI: return "wifi";
+        case ServerLinkType::CELLULAR: return "cellular";
+        case ServerLinkType::OTHER: return "other";
+        case ServerLinkType::UNKNOWN:
+        default:
+            return "unknown";
+    }
+}
+
+std::string getDefaultRouteInterface() {
+    std::ifstream in("/proc/net/route");
+    if (!in.is_open()) {
+        return "";
+    }
+
+    std::string line;
+    std::getline(in, line); // header
+    while (std::getline(in, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        std::istringstream iss(line);
+        std::string iface;
+        std::string destination;
+        std::string gateway;
+        std::string flags;
+        if (!(iss >> iface >> destination >> gateway >> flags)) {
+            continue;
+        }
+        if (destination == "00000000") {
+            return iface;
+        }
+    }
+    return "";
+}
+
+ServerLinkSnapshot detectServerLinkSnapshot() {
+    ServerLinkSnapshot snapshot;
+    std::vector<std::string> candidates;
+
+    const std::string defaultIface = getDefaultRouteInterface();
+    if (!defaultIface.empty()) {
+        candidates.push_back(defaultIface);
+    }
+
+    for (const auto& iface : listInterfaces()) {
+        if (iface == defaultIface) {
+            continue;
+        }
+        candidates.push_back(iface);
+    }
+
+    for (const auto& iface : candidates) {
+        if (!interfaceIsUp(iface)) {
+            continue;
+        }
+
+        snapshot.iface = iface;
+        snapshot.type = detectInterfaceType(iface);
+
+        const int speedMbps = readIntFile("/sys/class/net/" + iface + "/speed", -1);
+        if (speedMbps > 0) {
+            snapshot.downMbps = static_cast<uint32_t>(speedMbps);
+            snapshot.upMbps = static_cast<uint32_t>(speedMbps);
+        } else {
+            snapshot.downMbps = 0;
+            snapshot.upMbps = 0;
+        }
+        return snapshot;
+    }
+
+    if (!defaultIface.empty()) {
+        snapshot.iface = defaultIface;
+        snapshot.type = detectInterfaceType(defaultIface);
+    }
+    return snapshot;
 }
 
 class JsonLogger {
@@ -505,6 +677,7 @@ int main(int argc, char* argv[]) {
     std::atomic<int> activeSessions{0};
     TrafficCounters counters;
     JsonLogger logger(options.logDir, options.logLevel);
+    const ServerLinkSnapshot serverLink = detectServerLinkSnapshot();
 
     std::mutex udpMutex;
     std::unordered_map<UdpSessionKey, UdpSession, UdpSessionKeyHash> udpSessions;
@@ -513,7 +686,11 @@ int main(int argc, char* argv[]) {
                "server_start",
                "\"port\":" + std::to_string(options.port) +
                    ",\"tickOverrideMs\":" + std::to_string(options.tickOverrideMs) +
-                   ",\"maxSessions\":" + std::to_string(options.maxSessions));
+                   ",\"maxSessions\":" + std::to_string(options.maxSessions) +
+                   ",\"serverIface\":\"" + jsonEscape(serverLink.iface) + "\"" +
+                   ",\"serverLinkType\":\"" + jsonEscape(serverLinkTypeToString(serverLink.type)) + "\"" +
+                   ",\"serverLinkDownMbps\":" + std::to_string(serverLink.downMbps) +
+                   ",\"serverLinkUpMbps\":" + std::to_string(serverLink.upMbps));
 
     auto removeUdpSession = [&](const UdpSessionKey& key, const char* reason) {
         std::lock_guard<std::mutex> lock(udpMutex);
@@ -654,6 +831,11 @@ int main(int argc, char* argv[]) {
                 appendLe<uint16_t>(ackBody, 0);
                 appendLe<uint32_t>(ackBody, durationMs);
                 appendLe<uint32_t>(ackBody, chunkBytes);
+                appendLe<uint8_t>(ackBody, static_cast<uint8_t>(serverLink.type));
+                appendLe<uint8_t>(ackBody, 0);
+                appendLe<uint16_t>(ackBody, 0);
+                appendLe<uint32_t>(ackBody, serverLink.downMbps);
+                appendLe<uint32_t>(ackBody, serverLink.upMbps);
                 auto ack = makeTcpFrame(TcpMessageType::START_ACK, startHeader.sessionId, ackBody);
                 if (!writeAll(clientFd, ack.data(), ack.size())) {
                     finish();
@@ -670,7 +852,11 @@ int main(int argc, char* argv[]) {
                                ",\"client\":\"" + jsonEscape(addrToString(client)) +
                                "\",\"direction\":\"" + std::string(direction == ThroughputDirection::DOWNLOAD ? "download" : "upload") +
                                "\",\"durationMs\":" + std::to_string(durationMs) +
-                               ",\"chunkBytes\":" + std::to_string(chunkBytes));
+                               ",\"chunkBytes\":" + std::to_string(chunkBytes) +
+                               ",\"serverIface\":\"" + jsonEscape(serverLink.iface) + "\"" +
+                               ",\"serverLinkType\":\"" + jsonEscape(serverLinkTypeToString(serverLink.type)) + "\"" +
+                               ",\"serverLinkDownMbps\":" + std::to_string(serverLink.downMbps) +
+                               ",\"serverLinkUpMbps\":" + std::to_string(serverLink.upMbps));
 
                 const uint64_t startNs = nowNs();
                 uint64_t transferredBytes = 0;
@@ -733,7 +919,11 @@ int main(int argc, char* argv[]) {
     });
 
     std::cout << "SpeedTestGamer server running on port " << options.port
-              << " (UDP v2 + TCP throughput), maxSessions=" << options.maxSessions << std::endl;
+              << " (UDP v2 + TCP throughput), maxSessions=" << options.maxSessions
+              << ", iface=" << (serverLink.iface.empty() ? "n/a" : serverLink.iface)
+              << ", link=" << serverLinkTypeToString(serverLink.type)
+              << ", theoretical=" << serverLink.downMbps << "/" << serverLink.upMbps << " Mbps"
+              << std::endl;
 
     uint64_t lastCleanupNs = nowNs();
 

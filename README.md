@@ -82,7 +82,7 @@ Framing binario little-endian:
 - Versión `1`
 - Mensajes:
   - `START_REQ`
-  - `START_ACK`
+  - `START_ACK` (incluye `accepted`, `durationMs`, `chunkBytes` y metadata opcional de vínculo teórico del server)
   - `DATA`
   - `STOP`
   - `RESULT`
@@ -92,3 +92,14 @@ Flujo:
 
 - Download: cliente inicia -> servidor envía `DATA` por duración -> `RESULT`
 - Upload: cliente inicia -> cliente envía `DATA` -> `STOP` -> servidor devuelve `RESULT`
+
+### Telemetría de vínculo del servidor
+
+Al iniciar, el servidor intenta detectar interfaz activa y velocidad teórica (best-effort en Linux, usando `/sys/class/net`):
+
+- `serverIface`
+- `serverLinkType` (`ethernet|wifi|cellular|other|unknown`)
+- `serverLinkDownMbps`
+- `serverLinkUpMbps`
+
+Estos valores se loguean en `server_start` y también se envían al cliente en `START_ACK` de throughput para visualización comparativa.

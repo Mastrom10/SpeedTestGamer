@@ -2,3 +2,4 @@ server
 client
 dist/
 *.o
+server_*.jsonl

@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iomanip>
+#include <ifaddrs.h>
 #include <iostream>
 #include <mutex>
 #include <net/if.h>
@@ -21,6 +22,7 @@
 #include <sys/time.h>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <unistd.h>
 #include <vector>
 #include <atomic>
@@ -342,6 +344,54 @@ std::string getDefaultRouteInterface() {
         }
     }
     return "";
+}
+
+std::vector<std::string> listListeningInterfaceIps(int port) {
+    std::vector<std::string> endpoints;
+    std::unordered_set<std::string> seen;
+
+    ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || ifaddr == nullptr) {
+        return endpoints;
+    }
+
+    for (ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr) {
+            continue;
+        }
+        if (ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        if ((ifa->ifa_flags & IFF_UP) == 0) {
+            continue;
+        }
+        if ((ifa->ifa_flags & IFF_LOOPBACK) != 0) {
+            continue;
+        }
+
+        char ip[INET_ADDRSTRLEN] = {0};
+        const auto* sin = reinterpret_cast<const sockaddr_in*>(ifa->ifa_addr);
+        if (!inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip))) {
+            continue;
+        }
+
+        std::ostringstream endpoint;
+        endpoint << ifa->ifa_name << " -> " << ip << ":" << port;
+        const std::string value = endpoint.str();
+        if (seen.insert(value).second) {
+            endpoints.push_back(value);
+        }
+    }
+
+    freeifaddrs(ifaddr);
+
+    if (endpoints.empty()) {
+        std::ostringstream loopback;
+        loopback << "lo -> 127.0.0.1:" << port;
+        endpoints.push_back(loopback.str());
+    }
+
+    return endpoints;
 }
 
 ServerLinkSnapshot detectServerLinkSnapshot() {
@@ -952,6 +1002,12 @@ int main(int argc, char* argv[]) {
               << ", link=" << serverLinkTypeToString(serverLink.type)
               << ", theoretical=" << serverLink.downMbps << "/" << serverLink.upMbps << " Mbps"
               << std::endl;
+
+    const auto listeningInterfaces = listListeningInterfaceIps(options.port);
+    std::cout << "Listening interfaces (IPv4):" << std::endl;
+    for (const auto& endpoint : listeningInterfaces) {
+        std::cout << "  - " << endpoint << std::endl;
+    }
 
     uint64_t lastCleanupNs = nowNs();
 
